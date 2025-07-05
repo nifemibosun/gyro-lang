@@ -1,0 +1,26 @@
+{
+  "name": "gyro-lang",
+  "version": "1.0.0",
+  "description": "A tiny language written in typescript",
+  "homepage": "https://github.com/nifemibosun/gyro-lang#readme",
+  "bugs": {
+    "url": "https://github.com/nifemibosun/gyro-lang/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nifemibosun/gyro-lang.git"
+  },
+  "license": "MIT",
+  "author": "nifemibosun <nifemibosun70@gmail.com>",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "tsc",
+    "start": "npm run build && node ./dist/test.js"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.10",
+    "typescript": "^5.8.3"
+  }
+}
