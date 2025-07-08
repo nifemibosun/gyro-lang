@@ -1,0 +1,13 @@
+{
+  "bytecode": [
+    1, 0,
+    80,
+    52,
+    33, 0,
+    0,
+    52
+  ],
+  "constantPool": [
+    "Hello, Gyro Hacker \nHappy Hacking"
+  ]
+}

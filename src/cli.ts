@@ -1,8 +1,10 @@
+#!/usr/bin/env node
+
 import fs from 'fs';
 import path from 'path';
 import readline from 'readline';
 
-import { compile } from './compiler.js';
+import { Compiler } from './compiler.js';
 import { GyroVM } from './vm.js';
 
 
@@ -53,10 +55,17 @@ async function main() {
             return;
         }
 
-        const source = fs.readFileSync(filename, 'utf-8');
-        const bytecode = compile(source);
-        const vm = new GyroVM(bytecode);
-        vm.run();
+        if (filename.endsWith('.gbc')) {
+            const content = fs.readFileSync(filename, 'utf-8');
+            const { bytecode, constantPool } = JSON.parse(content);
+            const vm = new GyroVM(bytecode, constantPool);
+            await vm.run();
+        } else {
+            const source = fs.readFileSync(filename, 'utf-8');
+            const { bytecode, constantPool } = Compiler.compile(source);
+            const vm = new GyroVM(bytecode, constantPool);
+            await vm.run();
+        }
     } else if (command === 'build') {
         let filename = args[1];
 
@@ -76,7 +85,7 @@ async function main() {
         }
 
         const source = fs.readFileSync(filename, 'utf-8');
-        const bytecode = compile(source);
+        const bytecode = Compiler.compile(source);
 
         let outPath = filename.replace(/\.gyro$/, '.gbc');
         try {
@@ -101,7 +110,7 @@ async function main() {
 
         const mainFile = path.join(srcDir, 'main.gyro');
         if (!fs.existsSync(mainFile)) {
-            fs.writeFileSync(mainFile, `// main.gyro\nprint("Hello from Gyro!");\n`);
+            fs.writeFileSync(mainFile, `fun main() {\n    print("Hello, Gyro Hacker");\n}\n\nmain();\n`);
         }
 
         if (!fs.existsSync(configPath)) {
@@ -121,7 +130,7 @@ async function main() {
             fs.writeFileSync(gitignore, `node_modules/\ndist/\n*.gbc\n`);
         }
 
-        console.log('✅ Gyro project initialized!');
+        console.log('New Gyro project initialized!');
   } else if (command === 'repl') {
         console.log('Gyro REPL — type "exit" to quit\n');
         const rl = readline.createInterface({
@@ -154,8 +163,8 @@ async function main() {
             }
 
             try {
-                const bytecode = compile(line);
-                const vm = new GyroVM(bytecode);
+                const { bytecode, constantPool } = Compiler.compile(line);
+                const vm = new GyroVM(bytecode, constantPool);
                 vm.run();
             } catch (err) {
                 console.error('Error:', (err as Error).message);
