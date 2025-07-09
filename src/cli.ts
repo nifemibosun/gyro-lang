@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import readline from 'readline';
 
-import { Compiler } from './compiler.js';
+import { compile } from './codegen.js';
 import { GyroVM } from './vm.js';
 
 
@@ -62,7 +62,7 @@ async function main() {
             await vm.run();
         } else {
             const source = fs.readFileSync(filename, 'utf-8');
-            const { bytecode, constantPool } = Compiler.compile(source);
+            const { bytecode, constantPool } = compile(source);
             const vm = new GyroVM(bytecode, constantPool);
             await vm.run();
         }
@@ -85,7 +85,7 @@ async function main() {
         }
 
         const source = fs.readFileSync(filename, 'utf-8');
-        const bytecode = Compiler.compile(source);
+        const bytecode = compile(source);
 
         let outPath = filename.replace(/\.gyro$/, '.gbc');
         try {
@@ -163,7 +163,7 @@ async function main() {
             }
 
             try {
-                const { bytecode, constantPool } = Compiler.compile(line);
+                const { bytecode, constantPool } = compile(line);
                 const vm = new GyroVM(bytecode, constantPool);
                 vm.run();
             } catch (err) {

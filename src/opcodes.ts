@@ -14,6 +14,7 @@ export enum OpCode {
     MUL = 0x12,
     DIV = 0x13,
     NEG = 0x14,
+    MOD = 0x15,
 
     EQ  = 0x20,
     NEQ = 0x21,
@@ -29,6 +30,8 @@ export enum OpCode {
     CALL = 0x33,
     RET  = 0x34,
     FUN  = 0x35,
+    AND = 0x36,
+    OR  = 0x37,
 
     LOAD_GLOBAL = 0x40,
     STORE_GLOBAL = 0x41,
@@ -63,6 +66,7 @@ export const OpcodeName: Record<number, string> = {
     [OpCode.MUL]: "MUL",
     [OpCode.DIV]: "DIV",
     [OpCode.NEG]: "NEG",
+    [OpCode.MOD]: "MOD",
 
     [OpCode.EQ ]: "EQ",
     [OpCode.NEQ]: "NEQ",

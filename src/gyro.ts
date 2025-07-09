@@ -1,7 +1,8 @@
-// gyro.ts
 import fs from 'fs';
-import { Compiler } from './compiler.js';
+import { compile } from './codegen.js';
 import { GyroVM } from './vm.js';
+
+// How do I test it now
 
 export class Gyro {
   /**
@@ -10,7 +11,7 @@ export class Gyro {
    * @returns The value left on the stack after execution, or undefined.
    */
   static async run(source: string): Promise<any> {
-    const { bytecode, constantPool } = Compiler.compile(source); // Compiler must return this structure
+    const { bytecode, constantPool } = compile(source); // Compiler must return this structure
     const vm = new GyroVM(bytecode, constantPool);
     return await vm.run();
   }
@@ -21,7 +22,7 @@ export class Gyro {
    * @returns An object containing the bytecode (number[]) and constantPool (any[]).
    */
   static compile(source: string): { bytecode: number[]; constantPool: any[]; } {
-    return Compiler.compile(source); // Assume compiler returns this
+    return compile(source); // Assume compiler returns this
   }
 
   /**
@@ -44,7 +45,7 @@ export class Gyro {
    * @param outFilePath The path where the .gbc file should be written.
    */
   static compileToFile(source: string, outFilePath: string) {
-    const { bytecode, constantPool } = Compiler.compile(source);
+    const { bytecode, constantPool } = compile(source);
     fs.writeFileSync(outFilePath, JSON.stringify({ bytecode, constantPool }, null, 2));
   }
 
@@ -66,53 +67,3 @@ export class Gyro {
     return await vm.run();
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-// import fs from 'fs';
-// import { Compiler } from './compiler.js';
-// import { GyroVM } from './vm.js';
-
-// export class Gyro {
-//   static run(source: string) {
-//     const bytecode = Compiler.compile(source);
-//     const vm = new GyroVM(bytecode);
-//     vm.run();
-//   }
-
-//   static compile(source: string): number[] {
-//     return Compiler.compile(source);
-//   }
-
-//   static runFile(filePath: string) {
-//     if (!fs.existsSync(filePath)) {
-//       throw new Error(`File not found: ${filePath}`);
-//     }
-//     const source = fs.readFileSync(filePath, 'utf-8');
-//     this.run(source);
-//   }
-
-//   static compileToFile(source: string, outFilePath: string) {
-//     const bytecode = Compiler.compile(source);
-//     fs.writeFileSync(outFilePath, JSON.stringify(bytecode));
-//   }
-
-//   static runBytecodeFile(filePath: string) {
-//     if (!fs.existsSync(filePath)) {
-//       throw new Error(`Bytecode file not found: ${filePath}`);
-//     }
-//     const content = fs.readFileSync(filePath, 'utf-8');
-//     const bytecode = JSON.parse(content);
-//     const vm = new GyroVM(bytecode);
-//     vm.run();
-//   }
-// }
