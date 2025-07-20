@@ -13,23 +13,23 @@ function printHelp() {
 Usage: gyro <command> <file>
 
 Commands:
-  run <file>     Compile and run a .gyro source file
-  build <file>   Compile a .gyro file to a .gbc file
-  repl           Start interactive REPL
-  --help         Show this help message
-  --version      Show Gyro version
+  run <file>         Compile and run a .gyro source file
+  compile <file>     Compile a .gyro file to a .gbc file
+  repl               Start interactive REPL
+  --help | -h        Show this help message
+  --version | -v     Show Gyro version
 `);
 }
 
 async function main() {
     const args = process.argv.slice(2);
 
-    if (args.length === 0 || args[0] === '--help') {
+    if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {
         printHelp();
         return;
     }
 
-    if (args[0] === '--version') {
+    if (args[0] === '--version' || args[0] === '-v') {
         console.log('Gyro v0.1.0');
         return;
     }
@@ -66,7 +66,7 @@ async function main() {
             const vm = new GyroVM(bytecode, constantPool);
             await vm.run();
         }
-    } else if (command === 'build') {
+    } else if (command === 'compile') {
         let filename = args[1];
 
         if (!filename) {
@@ -94,7 +94,8 @@ async function main() {
             const outDir = config.outDir || '.';
             if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
             outPath = path.join(outDir, `${baseName}.gbc`);
-        } catch {
+        } catch (err) {
+            throw new Error('Unable to compile program');
         }
 
         fs.writeFileSync(outPath, JSON.stringify(bytecode));

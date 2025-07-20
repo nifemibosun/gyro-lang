@@ -18,9 +18,8 @@
     "gyro": "./dist/cli.js"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
     "build": "tsc",
-    "start": "npm run build && node ./dist/test.js"
+    "build-link": "tsc && npm link"
   },
   "devDependencies": {
     "@types/node": "^24.0.10",
