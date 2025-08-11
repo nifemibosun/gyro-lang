@@ -46,6 +46,43 @@ export enum OpCode {
     ARRAY_GET    = 0x61,
     ARRAY_SET    = 0x62,
 
+    STRING_CONCAT = 0x70,
+    STRING_LENGTH = 0x71,
+    STRING_SUBSTR = 0x72,
+    STRING_CHAR_AT = 0x73,
+    STRING_INDEX_OF = 0x74,
+    STRING_TO_INT = 0x75,
+    INT_TO_STRING = 0x76,
+    STRING_COMPARE = 0x77,
+
+    CLASS_DEF = 0x80,
+    OBJECT_NEW = 0x81,
+    FIELD_GET = 0x82,
+    FIELD_SET = 0x83,
+    METHOD_CALL = 0x84,
+    INSTANCEOF = 0x85,
+
+    MALLOC = 0x90,
+    FREE = 0x91,
+    MEMCPY = 0x92,
+    MEMSET = 0x93,
+    PTR_GET = 0x94,
+    PTR_SET = 0x95,
+
+    SOCKET_CREATE = 0xA0,
+    SOCKET_BIND = 0xA1,
+    SOCKET_LISTEN = 0xA2,
+    SOCKET_ACCEPT = 0xA3,
+    SOCKET_SEND = 0xA4,
+    SOCKET_RECV = 0xA5,
+    SOCKET_CLOSE = 0xA6,
+
+    TRY_BEGIN = 0xB0,
+    TRY_END = 0xB1,
+    CATCH = 0xB2,
+    THROW = 0xB3,
+    FINALLY = 0xB4,
+
     HALT = 0xF0,
 }
 
@@ -82,6 +119,8 @@ export const OpcodeName: Record<number, string> = {
     [OpCode.CALL]: "CALL",
     [OpCode.RET]: "RET",
     [OpCode.FUN]: "FUN",
+    [OpCode.AND]: "AND",
+    [OpCode.OR]: "OR",
 
     [OpCode.LOAD_GLOBAL]: "LOAD_GLOBAL",
     [OpCode.STORE_GLOBAL]: "STORE_GLOBAL",
@@ -95,6 +134,43 @@ export const OpcodeName: Record<number, string> = {
     [OpCode.ARRAY_CREATE]: "ARRAY_CREATE",
     [OpCode.ARRAY_GET]: "ARRAY_GET",
     [OpCode.ARRAY_SET]: "ARRAY_SET",
+
+    [OpCode.STRING_CONCAT]: "STRING_CONCAT",
+    [OpCode.STRING_LENGTH]: "STRING_LENGTH",
+    [OpCode.STRING_SUBSTR]: "STRING_SUBSTR",
+    [OpCode.STRING_CHAR_AT]: "STRING_CHAR_AT",
+    [OpCode.STRING_INDEX_OF]: "STRING_INDEX_OF",
+    [OpCode.STRING_TO_INT]: "STRING_TO_INT",
+    [OpCode.INT_TO_STRING]: "INT_TO_STRING",
+    [OpCode.STRING_COMPARE]: "STRING_COMPARE",
+
+    [OpCode.CLASS_DEF]: "CLASS_DEF",
+    [OpCode.OBJECT_NEW]: "OBJECT_NEW",
+    [OpCode.FIELD_GET]: "FIELD_GET",
+    [OpCode.FIELD_SET]: "FIELD_SET",
+    [OpCode.METHOD_CALL]: "METHOD_CALL",
+    [OpCode.INSTANCEOF]: "INSTANCEOF",
+
+    [OpCode.MALLOC]: "MALLOC",
+    [OpCode.FREE]: "FREE",
+    [OpCode.MEMCPY]: "MEMCPY",
+    [OpCode.MEMSET]: "MEMSET",
+    [OpCode.PTR_GET]: "PTR_GET",
+    [OpCode.PTR_SET]: "PTR_SET",
+
+    [OpCode.SOCKET_CREATE]: "SOCKET_CREATE",
+    [OpCode.SOCKET_BIND]: "SOCKET_BIND",
+    [OpCode.SOCKET_LISTEN]: "SOCKET_LISTEN",
+    [OpCode.SOCKET_ACCEPT]: "SOCKET_ACCEPT",
+    [OpCode.SOCKET_SEND]: "SOCKET_SEND",
+    [OpCode.SOCKET_RECV]: "SOCKET_RECV",
+    [OpCode.SOCKET_CLOSE]: "SOCKET_CLOSE",
+
+    [OpCode.TRY_BEGIN]: "TRY_BEGIN",
+    [OpCode.TRY_END]: "TRY_END",
+    [OpCode.CATCH]: "CATCH",
+    [OpCode.THROW]: "THROW",
+    [OpCode.FINALLY]: "FINALLY",
 
     [OpCode.HALT]: "HALT",
 };

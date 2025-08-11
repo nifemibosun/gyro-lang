@@ -1,9 +1,8 @@
-import { tokenize } from "./lexer.js";
-import { Parser } from "./parser.js";
+import { compile } from './codegen.js';
 
-const source = 'fun main() { print("Hello, Gyro Hacker\n Happy Hacking");}';
+const source = `
+print("Bosun");
+`;
 
-const tokens = tokenize(source);
-const parser = new Parser(tokens);
-
-console.log("Parsed Tokens:", parser.parse());
+const gbc = compile(source);
+console.log(gbc);

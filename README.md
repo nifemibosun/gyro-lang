@@ -1,2 +1,2 @@
 # gyro-lang
-A tiny language written in typescript
+A vm based language.

@@ -2,7 +2,6 @@ import fs from 'fs';
 import { compile } from './codegen.js';
 import { GyroVM } from './vm.js';
 
-// How do I test it now
 
 export class Gyro {
   /**
@@ -11,8 +10,8 @@ export class Gyro {
    * @returns The value left on the stack after execution, or undefined.
    */
   static async run(source: string): Promise<any> {
-    const { bytecode, constantPool } = compile(source); // Compiler must return this structure
-    const vm = new GyroVM(bytecode, constantPool);
+    const { bytecode } = compile(source); // Compiler must return this structure
+    const vm = new GyroVM(bytecode);
     return await vm.run();
   }
 
@@ -59,11 +58,11 @@ export class Gyro {
       throw new Error(`Bytecode file not found: ${filePath}`);
     }
     const content = fs.readFileSync(filePath, 'utf-8');
-    const { bytecode, constantPool } = JSON.parse(content); // Expecting object with bytecode and constantPool
-    if (!Array.isArray(bytecode) || !Array.isArray(constantPool)) {
-        throw new Error(`Invalid GBC file format: Expected 'bytecode' and 'constantPool' arrays.`);
+    const { bytecode } = JSON.parse(content);
+    if (!Array.isArray(bytecode)) {
+        throw new Error(`Invalid GBC file format: Expected 'bytecode'`);
     }
-    const vm = new GyroVM(bytecode, constantPool);
+    const vm = new GyroVM(bytecode);
     return await vm.run();
   }
 }
