@@ -9,8 +9,8 @@ import {
     VariableDeclaration, FunctionDeclaration, ClassDeclaration,
     BlockStatement, IfStatement, WhileStatement, ReturnStatement,
     BinaryExpression, UnaryExpression, CallExpression, MemberExpression,
-    LiteralExpression, IdentifierExpression, ArrayExpression, 
-    ObjectLiteralExpression, ExpressionStatement, AssignmentExpression, 
+    LiteralExpression, IdentifierExpression, ArrayExpression, ForStatement,
+    ObjectLiteralExpression, ExpressionStatement, AssignmentExpression,
 } from './ast.js';
 
 export interface CompilationResult {
@@ -26,26 +26,33 @@ interface CompilerContext {
     bytecode: number[];
     constantPool: any[];
     constants: Map<any, number>;
-    
+
     globals: Map<string, number>;
     locals: Map<string, number>;
     classes: Map<string, any>;
     functions: Map<string, any>;
-    
+
     currentFunction?: string;
     currentClass?: string;
     localCount: number;
     globalCount: number;
-    
+
     breakTargets: number[];
     continueTargets: number[];
-    
+
     exceptionHandlers: any[];
 }
 
 export class GyroCodeGenerator {
     private ctx: CompilerContext;
     private typeInference: TypeInferenceEngine;
+    private builtInFunctions = new Set(['println', 'input', 'malloc', 'free']);
+    private builtInArgCounts: Map<string, number> = new Map([
+        ['println', 1],
+        ['input', 0],
+        ['malloc', 1],
+        ['free', 1],
+    ]);
 
     constructor() {
         this.ctx = {
@@ -67,7 +74,8 @@ export class GyroCodeGenerator {
 
     compile(ast: Program): CompilationResult {
         this.collectDeclarations(ast);
-        
+        this.validateTypes(ast);
+
         this.generateProgram(ast);
 
         return {
@@ -83,7 +91,147 @@ export class GyroCodeGenerator {
         };
     }
 
-    private collectDeclarations(ast: Program): void {
+    public validateTypes(ast: Program): void {
+        for (const stmt of ast.body) {
+            this.validateStatementTypes(stmt);
+        }
+    }
+
+    private validateStatementTypes(stmt: Statement): void {
+        switch (stmt.type) {
+            case 'ExpressionStatement':
+                this.validateExpressionTypes((stmt as ExpressionStatement).expression);
+                break;
+            case 'VariableDeclaration':
+                this.validateVariableDeclarationTypes(stmt as VariableDeclaration);
+                break;
+            case 'FunctionDeclaration':
+                this.validateFunctionDeclarationTypes(stmt as FunctionDeclaration);
+                break;
+            case 'ForStatement':
+                this.validateForStatementTypes(stmt as ForStatement);
+                break;
+        }
+    }
+
+    private validateForStatementTypes(node: ForStatement): void {
+        if (node.initializer) {
+            this.validateStatementTypes(node.initializer);
+        }
+        if (node.condition) {
+            const conditionType = this.typeInference.inferExpressionType(node.condition);
+            if (conditionType.name !== 'bool') {
+                throw new Error(`For loop condition must be of type 'bool', but got '${conditionType.name}'`);
+            }
+        }
+        if (node.increment) {
+            this.validateExpressionTypes(node.increment);
+        }
+        this.validateStatementTypes(node.body);
+    }
+
+    private generateForStatement(node: ForStatement): void {
+        const savedLocals = new Map(this.ctx.locals);
+        const savedLocalCount = this.ctx.localCount;
+
+        if (node.initializer) {
+            const varDecl = node.initializer as VariableDeclaration;
+            const localIndex = this.ctx.localCount++;
+            this.ctx.locals.set(varDecl.name, localIndex);
+            this.generateExpression(varDecl.initializer!);
+            this.emit(OpCode.STORE_LOCAL);
+            this.emit(localIndex);
+        }
+
+        const loopStart = this.ctx.bytecode.length;
+
+        if (node.condition) {
+            this.generateExpression(node.condition);
+            const exitJump = this.emitJump(OpCode.JZ);
+            this.ctx.breakTargets.push(exitJump);
+        }
+
+        this.generateStatement(node.body);
+
+        if (node.increment) {
+            this.generateExpression(node.increment);
+            this.emit(OpCode.POP);
+        }
+
+        this.emitLoop(loopStart);
+
+        if (node.condition) {
+            this.patchJump(this.ctx.breakTargets.pop()!);
+        }
+
+        this.ctx.locals = savedLocals;
+        this.ctx.localCount = savedLocalCount;
+    }
+
+    private validateVariableDeclarationTypes(node: VariableDeclaration): void {
+        if (node.initializer) {
+            const inferredType = this.typeInference.inferExpressionType(node.initializer);
+            if (node.typeAnnotation && node.typeAnnotation.name !== inferredType.name) {
+                throw new Error(`Type mismatch: Cannot assign '${inferredType.name}' to variable of type '${node.typeAnnotation.name}'`);
+            }
+        }
+        if (node.typeAnnotation) {
+            this.typeInference.registerVariable(node.name, node.typeAnnotation);
+        }
+    }
+
+    private validateFunctionDeclarationTypes(node: FunctionDeclaration): void {
+        // For now, the existing logic in generateFunctionDeclaration is sufficient.
+    }
+
+    private validateExpressionTypes(expr: Expression): void {
+        switch (expr.type) {
+            case 'BinaryExpression':
+                this.validateExpressionTypes((expr as BinaryExpression).left);
+                this.validateExpressionTypes((expr as BinaryExpression).right);
+                break;
+            case 'UnaryExpression':
+                this.validateExpressionTypes((expr as UnaryExpression).operand);
+                break;
+            case 'CallExpression':
+                this.validateCallExpressionTypes(expr as CallExpression);
+                break;
+        }
+    }
+
+    private validateCallExpressionTypes(node: CallExpression): void {
+        if (node.callee.type === 'IdentifierExpression') {
+            const funcName = (node.callee as IdentifierExpression).name;
+            let expectedParams: { name: string, type: string }[] = [];
+
+            if (this.isBuiltIn(funcName)) {
+                this.validateArgumentTypes(funcName, node.arguments);
+            } else {
+                const funcDef = this.ctx.functions.get(funcName);
+                if (!funcDef) {
+                    throw new Error(`Unknown function: ${funcName}`);
+                }
+
+                expectedParams = funcDef.parameters;
+
+                if (node.arguments.length !== expectedParams.length) {
+                    throw new Error(`Function '${funcName}' expects ${expectedParams.length} arguments, but received ${node.arguments.length}`);
+                }
+
+                for (let i = 0; i < node.arguments.length; i++) {
+                    const arg = node.arguments[i];
+                    const param = expectedParams[i];
+                    const inferredArgType = this.typeInference.inferExpressionType(arg);
+
+                    if (inferredArgType.name !== param.type) {
+                        throw new Error(`Type mismatch in call to '${funcName}': Argument ${i + 1} has type '${inferredArgType.name}' but expected '${param.type}'`);
+                    }
+                }
+            }
+        }
+    }
+
+    public collectDeclarations(ast: Program): void {
         for (const stmt of ast.body) {
             if (stmt.type === 'ClassDeclaration') {
                 this.collectClass(stmt as ClassDeclaration);
@@ -104,8 +252,16 @@ export class GyroCodeGenerator {
             classDef.methods.push({
                 name: method.name,
                 address: 0,
-                params: method.parameters.map(p => p.name),
+                params: method.parameters.map(p => ({
+                    name: p.name,
+                    type: p.typeAnnotation?.name || 'any'
+                })),
                 returnType: method.returnType?.name || 'void'
+            });
+
+            this.collectFunction({
+                ...method,
+                name: `${node.name}_${method.name}`,
             });
         }
 
@@ -116,7 +272,10 @@ export class GyroCodeGenerator {
         const funcDef = {
             name: node.name,
             address: 0,
-            params: node.parameters.map(p => p.name),
+            parameters: node.parameters.map(p => ({
+                name: p.name,
+                type: p.typeAnnotation?.name || 'any'
+            })),
             returnType: node.returnType?.name || 'void'
         };
 
@@ -124,10 +283,22 @@ export class GyroCodeGenerator {
     }
 
     private generateProgram(ast: Program): void {
+        const mainJump = this.emitJump(OpCode.JMP);
+
         for (const stmt of ast.body) {
-            this.generateStatement(stmt);
+            if (stmt.type === 'FunctionDeclaration' || stmt.type === 'ClassDeclaration') {
+                this.generateStatement(stmt);
+            }
         }
-        
+
+        this.patchJump(mainJump);
+
+        for (const stmt of ast.body) {
+            if (stmt.type !== 'FunctionDeclaration' && stmt.type !== 'ClassDeclaration') {
+                this.generateStatement(stmt);
+            }
+        }
+
         this.emit(OpCode.HALT);
     }
 
@@ -152,6 +323,9 @@ export class GyroCodeGenerator {
             case 'IfStatement':
                 this.generateIfStatement(stmt as IfStatement);
                 break;
+            case 'ForStatement':
+                this.generateForStatement(stmt as ForStatement);
+                break;
             case 'WhileStatement':
                 this.generateWhileStatement(stmt as WhileStatement);
                 break;
@@ -174,9 +348,14 @@ export class GyroCodeGenerator {
 
         if (node.initializer) {
             this.generateExpression(node.initializer);
+            const inferredType = this.typeInference.inferExpressionType(node.initializer);
+
+            if (actualType && actualType.name !== inferredType.name) {
+                throw new Error(`Type mismatch: Cannot assign '${inferredType.name}' to variable of type '${actualType.name}'`);
+            }
 
             if (!actualType) {
-                actualType = this.typeInference.inferExpressionType(node.initializer);
+                actualType = inferredType;
             }
         } else {
             if (!actualType) {
@@ -194,6 +373,8 @@ export class GyroCodeGenerator {
     }
 
     private generateFunctionDeclaration(node: FunctionDeclaration): void {
+        this.emit(OpCode.FUN);
+
         const funcDef = this.ctx.functions.get(node.name);
         if (funcDef) {
             funcDef.address = this.ctx.bytecode.length;
@@ -215,11 +396,15 @@ export class GyroCodeGenerator {
         this.ctx.locals.clear();
         this.ctx.localCount = 0;
 
+        if (this.ctx.currentClass) {
+            this.ctx.locals.set('this', this.ctx.localCount++);
+        }
+
         for (let i = 0; i < node.parameters.length; i++) {
             const param = node.parameters[i];
-            this.ctx.locals.set(param.name, i);
-            this.ctx.localCount++;
-            
+            const localIndex = this.ctx.localCount++;
+            this.ctx.locals.set(param.name, localIndex);
+
             if (param.typeAnnotation) {
                 this.typeInference.registerVariable(param.name, param.typeAnnotation);
             }
@@ -250,7 +435,7 @@ export class GyroCodeGenerator {
                 params: method.parameters.map(p => p.name),
                 returnType: method.returnType?.name || 'void'
             };
-            
+
             this.ctx.functions.set(methodName, funcDef);
             this.generateFunctionDeclaration(method);
         }
@@ -264,10 +449,10 @@ export class GyroCodeGenerator {
 
     private generateIfStatement(node: IfStatement): void {
         this.generateExpression(node.condition);
-        
+
         const elseJump = this.emitJump(OpCode.JZ);
         this.generateStatement(node.thenBranch);
-        
+
         if (node.elseBranch) {
             const endJump = this.emitJump(OpCode.JMP);
             this.patchJump(elseJump);
@@ -280,18 +465,18 @@ export class GyroCodeGenerator {
 
     private generateWhileStatement(node: WhileStatement): void {
         const loopStart = this.ctx.bytecode.length;
-        
+
         this.generateExpression(node.condition);
         const exitJump = this.emitJump(OpCode.JZ);
-        
+
         this.ctx.continueTargets.push(loopStart);
         this.ctx.breakTargets.push(exitJump);
-        
+
         this.generateStatement(node.body);
-        
+
         this.emitLoop(loopStart);
         this.patchJump(exitJump);
-        
+
         this.ctx.continueTargets.pop();
         this.ctx.breakTargets.pop();
     }
@@ -307,9 +492,9 @@ export class GyroCodeGenerator {
 
     private generateTryStatement(node: TryStatement): void {
         const tryStart = this.ctx.bytecode.length;
-        
+
         this.generateStatement(node.body);
-        
+
         const tryEnd = this.ctx.bytecode.length;
         let catchStart = 0;
         let finallyStart = 0;
@@ -317,14 +502,14 @@ export class GyroCodeGenerator {
         if (node.catchClause) {
             catchStart = this.ctx.bytecode.length;
             this.emit(OpCode.CATCH);
-            
+
             if (node.catchClause.parameter) {
                 const localIndex = this.ctx.localCount++;
                 this.ctx.locals.set(node.catchClause.parameter, localIndex);
                 this.emit(OpCode.STORE_LOCAL);
                 this.emit(localIndex);
             }
-            
+
             this.generateStatement(node.catchClause.body);
         }
 
@@ -457,64 +642,90 @@ export class GyroCodeGenerator {
     }
 
     private generateCallExpression(node: CallExpression): void {
-        for (const arg of node.arguments) {
-            this.generateExpression(arg);
-        }
-
         if (node.callee.type === 'MemberExpression') {
             const member = node.callee as MemberExpression;
-            
-            if (member.object.type === 'IdentifierExpression') {
-                const objectName = (member.object as IdentifierExpression).name;
-                const methodName = (member.property as IdentifierExpression).name;
-                
-                if (this.ctx.classes.has(objectName)) {
-                    const fullMethodName = `${objectName}_${methodName}`;
-                    const funcDef = this.ctx.functions.get(fullMethodName);
-                    if (funcDef) {
-                        this.emit(OpCode.CALL);
-                        this.emit(funcDef.address);
-                        this.emit(node.arguments.length);
-                    } else {
-                        throw new Error(`Unknown method: ${objectName}.${methodName}`);
-                    }
-                } else {
-                    this.generateExpression(member.object);
-                    this.emit(OpCode.METHOD_CALL);
-                    this.emit(this.addConstant(methodName));
-                    this.emit(node.arguments.length + 1);
+            const methodName = (member.property as IdentifierExpression).name;
+
+            if (member.object.type === 'IdentifierExpression' && this.ctx.classes.has((member.object as IdentifierExpression).name)) {
+                for (const arg of node.arguments) {
+                    this.generateExpression(arg);
                 }
-            }
-        } else if (node.callee.type === 'IdentifierExpression') {
-            const funcName = (node.callee as IdentifierExpression).name;
-            
-            if (funcName === 'print') {
-                if (node.arguments.length !== 1) {
-                    throw new Error('print() expects exactly 1 argument');
-                }
-                this.emit(OpCode.PRINT);
-            } else if (funcName === 'input') {
-                this.emit(OpCode.INPUT);
-            } else if (funcName === 'malloc') {
-                this.emit(OpCode.MALLOC);
-            } else if (funcName === 'free') {
-                this.emit(OpCode.FREE);
-            } else {
-                const funcDef = this.ctx.functions.get(funcName);
+                const className = (member.object as IdentifierExpression).name;
+                const fullMethodName = `${className}_${methodName}`;
+                const funcDef = this.ctx.functions.get(fullMethodName);
+
                 if (funcDef) {
                     this.emit(OpCode.CALL);
                     this.emit(funcDef.address);
                     this.emit(node.arguments.length);
                 } else {
-                    throw new Error(`Unknown function: ${funcName}`);
+                    throw new Error(`Unknown static method: ${className}.${methodName}`);
                 }
+            } else {
+                this.generateExpression(member.object);
+
+                for (const arg of node.arguments) {
+                    this.generateExpression(arg);
+                }
+
+                this.emit(OpCode.METHOD_CALL);
+                this.emit(this.addConstant(methodName));
+                this.emit(node.arguments.length);
+            }
+        } else if (node.callee.type === 'IdentifierExpression') {
+            const funcName = (node.callee as IdentifierExpression).name;
+
+            if (this.ctx.functions.has(funcName) || this.isBuiltIn(funcName)) {
+                let expectedArgs: number;
+                let funcDef;
+
+                if (this.isBuiltIn(funcName)) {
+                    expectedArgs = this.getExpectedArgCount(funcName);
+                } else {
+                    funcDef = this.ctx.functions.get(funcName);
+                    if (!funcDef) {
+                        throw new Error(`Unknown function: ${funcName}`);
+                    }
+                    expectedArgs = funcDef.parameters.length;
+                }
+
+                if (node.arguments.length !== expectedArgs) {
+                    throw new Error(`Function '${funcName}' expects ${expectedArgs} arguments, but received ${node.arguments.length}`);
+                }
+
+                for (const arg of node.arguments) {
+                    this.generateExpression(arg);
+                }
+
+                if (this.isBuiltIn(funcName)) {
+                    switch (funcName) {
+                        case 'println':
+                            this.emit(OpCode.PRINT_LN);
+                            break;
+                        case 'input':
+                            this.emit(OpCode.INPUT);
+                            break;
+                        case 'malloc':
+                            this.emit(OpCode.MALLOC);
+                            break;
+                        case 'free':
+                            this.emit(OpCode.FREE);
+                            break;
+                    }
+                } else {
+                    this.emit(OpCode.CALL);
+                    this.emit(funcDef.address);
+                    this.emit(node.arguments.length);
+                }
+            } else {
+                throw new Error(`Unknown function: ${funcName}`);
             }
         }
     }
 
     private generateMemberExpression(node: MemberExpression): void {
         this.generateExpression(node.object);
-        
+
         if (node.computed) {
             this.generateExpression(node.property);
             this.emit(OpCode.ARRAY_GET);
@@ -527,29 +738,25 @@ export class GyroCodeGenerator {
 
     private generateAssignmentExpression(node: AssignmentExpression): void {
         if (node.target.type === 'IdentifierExpression') {
-            this.generateExpression(node.value);
-            this.emit(OpCode.DUP);
-            this.emit(OpCode.STORE_LOCAL);
-            
             const name = (node.target as IdentifierExpression).name;
             const localIndex = this.ctx.locals.get(name);
-            
+            const globalIndex = this.ctx.globals.get(name);
+
+            this.generateExpression(node.value);
+
             if (localIndex !== undefined) {
                 this.emit(OpCode.STORE_LOCAL);
                 this.emit(localIndex);
+            } else if (globalIndex !== undefined) {
+                this.emit(OpCode.STORE_GLOBAL);
+                this.emit(globalIndex);
             } else {
-                const globalIndex = this.ctx.globals.get(name);
-                if (globalIndex !== undefined) {
-                    this.emit(OpCode.STORE_GLOBAL);
-                    this.emit(globalIndex);
-                } else {
-                    throw new Error(`Undefined variable: ${name}`);
-                }
+                throw new Error(`Undefined variable: ${name}`);
             }
         } else if (node.target.type === 'MemberExpression') {
             const member = node.target as MemberExpression;
             this.generateExpression(member.object);
-            
+
             if (member.computed) {
                 this.generateExpression(member.property);
                 this.generateExpression(node.value);
@@ -592,6 +799,42 @@ export class GyroCodeGenerator {
         }
     }
 
+
+    private isBuiltIn(funcName: string): boolean {
+        return this.builtInFunctions.has(funcName);
+    }
+
+    private getExpectedArgCount(funcName: string): number {
+        const count = this.builtInArgCounts.get(funcName);
+        return count !== undefined ? count : -1;
+    }
+
+    private validateArgumentTypes(funcName: string, args: Expression[]): void {
+        if (funcName === 'println') {
+            if (args.length === 1) {
+                const argType = this.typeInference.inferExpressionType(args[0]);
+                const validTypes = new Set(['int', 'float', 'string', 'bool', 'any']);
+                if (!validTypes.has(argType.name)) {
+                    throw new Error(`Type mismatch in 'print()': Argument of type '${argType.name}' is not printable.`);
+                }
+            }
+        } else if (funcName === 'malloc') {
+            if (args.length === 1) {
+                const argType = this.typeInference.inferExpressionType(args[0]);
+                if (argType.name !== 'int') {
+                    throw new Error(`Type mismatch in 'malloc()': Expected 'int', but received '${argType.name}'`);
+                }
+            }
+        } else if (funcName === 'free') {
+            if (args.length === 1) {
+                const argType = this.typeInference.inferExpressionType(args[0]);
+                if (argType.name === 'void' || argType.name === 'int' || argType.name === 'float' || argType.name === 'string' || argType.name === 'bool') {
+                    throw new Error(`Type mismatch in 'free()': Cannot free a primitive type '${argType.name}'.`);
+                }
+            }
+        }
+    }
+
     private emit(opcode: OpCode | number): void {
         this.ctx.bytecode.push(opcode);
     }
@@ -630,7 +873,10 @@ export function compile(source: string): CompilationResult {
         const tokens = tokenize(source);
         const ast = parse(tokens);
         const codegen = new GyroCodeGenerator();
-        
+
+        codegen.collectDeclarations(ast);
+        codegen.validateTypes(ast);
+
         return codegen.compile(ast);
     } catch (error) {
         throw new Error(`Compilation failed: ${(error as Error).message}`);

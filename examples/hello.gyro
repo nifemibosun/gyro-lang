@@ -1,3 +1,6 @@
+// This is a simple program in gyro
 fun main(): void {
-    print("Hello, Gyro Hacker");
+    println("Hello, Gyro Hacker");
 }
+
+main();

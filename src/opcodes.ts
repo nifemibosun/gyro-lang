@@ -38,7 +38,7 @@ export enum OpCode {
     LOAD_LOCAL = 0x42,
     STORE_LOCAL = 0x43,
 
-    PRINT = 0x50,
+    PRINT_LN = 0x50,
     INPUT = 0x51,
     EXIT  = 0x52,
 
@@ -127,7 +127,7 @@ export const OpcodeName: Record<number, string> = {
     [OpCode.LOAD_LOCAL]: "LOAD_LOCAL",
     [OpCode.STORE_LOCAL]: "STORE_LOCAL",
 
-    [OpCode.PRINT]: "PRINT",
+    [OpCode.PRINT_LN]: "PRINT_LN",
     [OpCode.INPUT]: "INPUT",
     [OpCode.EXIT]: "EXIT",
 

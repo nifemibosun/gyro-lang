@@ -39,12 +39,12 @@ export enum TokenType {
     AND_AND, OR_OR,
 
     // Delimiters
-    LEFT_PAREN, RIGHT_PAREN,        // ( )
-    LEFT_BRACE, RIGHT_BRACE,        // { }
-    LEFT_BRACKET, RIGHT_BRACKET,    // [ ]
-    COMMA, DOT, SEMICOLON,          // , . ;
-    COLON, QUESTION,                // : ?
-    ARROW,                          // =>
+    LEFT_PAREN, RIGHT_PAREN,
+    LEFT_BRACE, RIGHT_BRACE,
+    LEFT_BRACKET, RIGHT_BRACKET,
+    COMMA, DOT, SEMICOLON,
+    COLON, QUESTION,
+    ARROW,
 
     // End of File
     EOF
@@ -157,7 +157,6 @@ export class GyroLexer {
         const c = this.advance();
 
         switch (c) {
-            // Single character tokens
             case '(': this.addToken(TokenType.LEFT_PAREN, undefined, startCol); break;
             case ')': this.addToken(TokenType.RIGHT_PAREN, undefined, startCol); break;
             case '{': this.addToken(TokenType.LEFT_BRACE, undefined, startCol); break;
@@ -170,7 +169,6 @@ export class GyroLexer {
             case ':': this.addToken(TokenType.COLON, undefined, startCol); break;
             case '?': this.addToken(TokenType.QUESTION, undefined, startCol); break;
 
-            // Operators
             case '+':
                 if (this.match('+')) {
                     this.addToken(TokenType.PLUS_PLUS, undefined, startCol);
@@ -251,12 +249,10 @@ export class GyroLexer {
 
             case '/':
                 if (this.match('/')) {
-                    // Line comment
                     while (this.peek() !== '\n' && !this.isAtEnd()) {
                         this.advance();
                     }
                 } else if (this.match('*')) {
-                    // Block comment
                     this.blockComment();
                 } else if (this.match('=')) {
                     this.addToken(TokenType.SLASH_EQUAL, undefined, startCol);
@@ -265,12 +261,10 @@ export class GyroLexer {
                 }
                 break;
 
-            // String literals
             case '"':
                 this.string();
                 break;
 
-            // Ignore whitespace
             case ' ':
             case '\r':
             case '\t':
@@ -278,7 +272,7 @@ export class GyroLexer {
 
             case '\n':
                 this.line++;
-                this.column = 0; // Will be incremented by advance()
+                this.column = 0;
                 break;
 
             default:
@@ -352,7 +346,6 @@ export class GyroLexer {
             return;
         }
 
-        // Consume closing "
         this.advance();
         this.addToken(TokenType.STRING, value, startCol);
     }
@@ -364,9 +357,8 @@ export class GyroLexer {
             this.advance();
         }
 
-        // Look for decimal point
         if (this.peek() === '.' && this.isDigit(this.peekNext())) {
-            this.advance(); // Consume '.'
+            this.advance();
             while (this.isDigit(this.peek())) {
                 this.advance();
             }

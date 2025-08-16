@@ -157,7 +157,7 @@ export class TypeInferenceEngine {
             const funcName = (expr.callee as IdentifierExpression).name;
             
             switch (funcName) {
-                case 'print':
+                case 'println':
                     return ASTFactory.typeAnnotation('void');
                 case 'input':
                     return ASTFactory.typeAnnotation('string');

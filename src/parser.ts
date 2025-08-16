@@ -36,7 +36,6 @@ export class GyroParser {
         return ASTFactory.program(statements, imports, exports);
     }
 
-    // Declarations
     private declaration(): Statement | null {
         try {
             if (this.match(TokenType.CLASS)) return this.classDeclaration();
@@ -66,10 +65,9 @@ export class GyroParser {
 
         while (!this.check(TokenType.RIGHT_BRACE) && !this.isAtEnd()) {
             if (this.check(TokenType.FUN)) {
-                this.advance(); // consume 'fun'
+                this.advance();
                 methods.push(this.functionDeclaration());
             } else {
-                // Field declaration: name: type;
                 const fieldName = this.consume(TokenType.IDENTIFIER, "Expected field name").value;
                 this.consume(TokenType.COLON, "Expected ':' after field name");
                 const typeAnnotation = this.typeAnnotation();
@@ -112,7 +110,6 @@ export class GyroParser {
         
         this.consume(TokenType.RIGHT_PAREN, "Expected ')' after parameters");
 
-        // Return type is REQUIRED for functions
         this.consume(TokenType.COLON, "Expected ':' and return type after function parameters");
         const returnType = this.typeAnnotation();
 
@@ -128,7 +125,6 @@ export class GyroParser {
 
         let typeAnnotation: TypeAnnotation | undefined;
         
-        // Type annotation is now optional
         if (this.match(TokenType.COLON)) {
             typeAnnotation = this.typeAnnotation();
         }
@@ -164,7 +160,6 @@ export class GyroParser {
         throw this.error(this.peek(), "Expected type name");
     }
 
-    // Statements
     private statement(): Statement {
         if (this.match(TokenType.IF)) return this.ifStatement();
         if (this.match(TokenType.WHILE)) return this.whileStatement();
@@ -455,7 +450,6 @@ export class GyroParser {
         if (this.match(TokenType.IDENTIFIER)) {
             const name = this.previous().value;
             
-            // Check for object literal: Person { ... }
             if (this.check(TokenType.LEFT_BRACE)) {
                 return this.objectLiteral(name);
             }
@@ -512,7 +506,6 @@ export class GyroParser {
         return { type: 'ArrayExpression', elements };
     }
 
-    // Utility methods
     private match(...types: TokenType[]): boolean {
         for (const type of types) {
             if (this.check(type)) {
@@ -579,7 +572,6 @@ export class GyroParser {
     }
 }
 
-// Utility functions for easy parsing
 export function parse(tokens: Token[]): Program {
     const parser = new GyroParser(tokens);
     return parser.parse();

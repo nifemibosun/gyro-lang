@@ -298,7 +298,7 @@ export class GyroVM {
             break;
           }
 
-          case OpCode.PRINT:
+          case OpCode.PRINT_LN:
             this.ensureStack(1);
             console.log(this.stack.pop());
             this.stack.push(null);
@@ -433,7 +433,6 @@ export class GyroVM {
               fields: new Map()
             };
             
-            // Initialize fields
             for (const field of classDef.fields) {
               obj.fields.set(field, null);
             }

@@ -405,7 +405,7 @@ async function main() {
         const mainFile = path.join(srcDir, 'main.gyro');
         fs.writeFileSync(mainFile, `
 fun main(): void {
-    print("Hello, Gyro Hacker");
+    println("Hello, Gyro Hacker");
 }
 
 main();
@@ -413,11 +413,10 @@ main();
 
         const config = {
           name: projectName,
-          version: '1.0.0',
+          version: '0.1.0',
           entry: 'src/main.gyro',
           outDir: 'dist',
           target: 'gyro-vm',
-          memoryModel: 'enhanced',
         };
 
         fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
@@ -452,6 +451,7 @@ gyro debug src/main.gyro
         console.log(`\nGet started:`);
         console.log(`   cd ${projectName}`);
         console.log(`   gyro run`);
+        console.log(`   gyro comp`);
         break;
       }
 

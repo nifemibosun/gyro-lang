@@ -1,4 +1,4 @@
-import { Token, TokenType } from './lexer.js';
+import { Token } from './lexer.js';
 
 export interface ASTNode {
     type: string;
