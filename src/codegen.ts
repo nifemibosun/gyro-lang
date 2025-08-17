@@ -815,7 +815,7 @@ export class GyroCodeGenerator {
                 const argType = this.typeInference.inferExpressionType(args[0]);
                 const validTypes = new Set(['int', 'float', 'string', 'bool', 'any']);
                 if (!validTypes.has(argType.name)) {
-                    throw new Error(`Type mismatch in 'print()': Argument of type '${argType.name}' is not printable.`);
+                    throw new Error(`Type mismatch in 'println()': Argument of type '${argType.name}' is not printable.`);
                 }
             }
         } else if (funcName === 'malloc') {
@@ -828,13 +828,20 @@ export class GyroCodeGenerator {
         } else if (funcName === 'free') {
             if (args.length === 1) {
                 const argType = this.typeInference.inferExpressionType(args[0]);
-                if (argType.name === 'void' || argType.name === 'int' || argType.name === 'float' || argType.name === 'string' || argType.name === 'bool') {
-                    throw new Error(`Type mismatch in 'free()': Cannot free a primitive type '${argType.name}'.`);
+                if (
+                    argType.name === 'void' ||
+                    argType.name === 'int' ||
+                    argType.name === 'float' ||
+                    argType.name === 'string' ||
+                    argType.name === 'bool'
+                ) {
+                    throw new Error(
+                        `Type mismatch in 'free()': Cannot free a primitive type '${argType.name}'.`
+                    );
                 }
             }
         }
     }
-
     private emit(opcode: OpCode | number): void {
         this.ctx.bytecode.push(opcode);
     }

@@ -440,7 +440,7 @@ dist/
 gyro run
 
 # Compile to bytecode
-gyro compile
+gyro comp
 
 # Run with debug info
 gyro debug src/main.gyro
