@@ -10,9 +10,16 @@ fun is_greater(a: int, b: int): int {
     }
 }
 
+fun for_loop(n: int): void {
+    for (let i = 0; i < n; i = i + 1) {
+        println(i);
+    }
+    println("Loop finished.");
+}
+
 
 fun main(): void {
     println(is_greater(5, 4));
+    println("\n");
+    for_loop(10);
 }
-
-main();

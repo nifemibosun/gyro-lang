@@ -2,5 +2,3 @@
 fun main(): void {
     println("Hello, Gyro Hacker");
 }
-
-main();

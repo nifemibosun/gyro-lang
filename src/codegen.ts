@@ -135,39 +135,46 @@ export class GyroCodeGenerator {
         const savedLocalCount = this.ctx.localCount;
 
         if (node.initializer) {
-            const varDecl = node.initializer as VariableDeclaration;
-            const localIndex = this.ctx.localCount++;
-            this.ctx.locals.set(varDecl.name, localIndex);
-            this.generateExpression(varDecl.initializer!);
-            this.emit(OpCode.STORE_LOCAL);
-            this.emit(localIndex);
+            this.generateStatement(node.initializer);
         }
-
+        
         const loopStart = this.ctx.bytecode.length;
-
+        this.ctx.continueTargets.push(this.ctx.bytecode.length);
+        
+        let exitJumpPatch: number | undefined;
         if (node.condition) {
             this.generateExpression(node.condition);
-            const exitJump = this.emitJump(OpCode.JZ);
-            this.ctx.breakTargets.push(exitJump);
+            exitJumpPatch = this.emitJump(OpCode.JZ);
         }
+        
+        this.ctx.breakTargets.push(exitJumpPatch !== undefined ? exitJumpPatch : -1);
 
         this.generateStatement(node.body);
-
+        
         if (node.increment) {
+            const continueTarget = this.ctx.continueTargets.pop();
+            if (continueTarget !== undefined) {
+                this.ctx.continueTargets.push(this.ctx.bytecode.length);
+            }
             this.generateExpression(node.increment);
             this.emit(OpCode.POP);
         }
 
         this.emitLoop(loopStart);
 
-        if (node.condition) {
-            this.patchJump(this.ctx.breakTargets.pop()!);
+        this.patchJump(this.ctx.breakTargets.pop()!);
+        this.ctx.continueTargets.pop();
+
+        const localsInScope = this.ctx.localCount - savedLocalCount;
+        if (localsInScope > 0) {
+            this.emit(OpCode.POP);
+            this.emit(localsInScope);
         }
 
         this.ctx.locals = savedLocals;
         this.ctx.localCount = savedLocalCount;
     }
-
+    
     private validateVariableDeclarationTypes(node: VariableDeclaration): void {
         if (node.initializer) {
             const inferredType = this.typeInference.inferExpressionType(node.initializer);
@@ -272,6 +279,7 @@ export class GyroCodeGenerator {
         const funcDef = {
             name: node.name,
             address: 0,
+            localCount: 0,
             parameters: node.parameters.map(p => ({
                 name: p.name,
                 type: p.typeAnnotation?.name || 'any'
@@ -283,23 +291,41 @@ export class GyroCodeGenerator {
     }
 
     private generateProgram(ast: Program): void {
-        const mainJump = this.emitJump(OpCode.JMP);
+        const mainFuncDef = this.ctx.functions.get('main');
+        if (!mainFuncDef) {
+            throw new Error("Compilation Error: No 'main' function found. The 'main' function is required as the program entry point.");
+        }
+        
+        if (mainFuncDef.parameters.length > 0) {
+            throw new Error("Compilation Error: The 'main' function cannot accept any arguments.");
+        }
+
+        this.emit(OpCode.CALL);
+        const mainCallAddressOffset = this.ctx.bytecode.length;
+        this.emit(0xFFFF);
+        this.emit(0);
+        this.emit(OpCode.HALT);
 
         for (const stmt of ast.body) {
             if (stmt.type === 'FunctionDeclaration' || stmt.type === 'ClassDeclaration') {
                 this.generateStatement(stmt);
             }
         }
-
-        this.patchJump(mainJump);
-
+        
         for (const stmt of ast.body) {
-            if (stmt.type !== 'FunctionDeclaration' && stmt.type !== 'ClassDeclaration') {
-                this.generateStatement(stmt);
+            if (stmt.type !== 'FunctionDeclaration' && stmt.type !== 'ClassDeclaration' && stmt.type !== 'VariableDeclaration') {
+               if(stmt.type !== 'VariableDeclaration') {
+                 throw new Error(`Unexpected top-level statement of type '${stmt.type}'. All executable code must be inside a function.`);
+               }
             }
-        }
+       }
 
-        this.emit(OpCode.HALT);
+        const finalMainAddress = this.ctx.functions.get('main')?.address;
+        if (finalMainAddress === undefined) {
+            throw new Error("Internal Compiler Error: Could not resolve 'main' function address after compilation.");
+        }
+        
+        this.ctx.bytecode[mainCallAddressOffset] = finalMainAddress;
     }
 
     private generateStatement(stmt: Statement): void {
@@ -313,9 +339,19 @@ export class GyroCodeGenerator {
             case 'ClassDeclaration':
                 this.generateClassDeclaration(stmt as ClassDeclaration);
                 break;
+            case 'BreakStatement':
+                this.generateBreakStatement();
+                break;
+            case 'ContinueStatement':
+                this.generateContinueStatement();
+                break;
             case 'ExpressionStatement':
-                this.generateExpression((stmt as ExpressionStatement).expression);
-                this.emit(OpCode.POP);
+                const expr = (stmt as ExpressionStatement).expression;
+                this.generateExpression(expr);
+
+                if (expr.type !== 'AssignmentExpression' && expr.type !== 'CallExpression') {
+                    this.emit(OpCode.POP);
+                }
                 break;
             case 'BlockStatement':
                 this.generateBlockStatement(stmt as BlockStatement);
@@ -421,6 +457,10 @@ export class GyroCodeGenerator {
             }
         }
 
+        if (funcDef) {
+            funcDef.localCount = this.ctx.localCount;
+        }
+
         this.ctx.locals = savedLocals;
         this.ctx.localCount = savedLocalCount;
         this.ctx.currentFunction = savedFunction;
@@ -465,20 +505,36 @@ export class GyroCodeGenerator {
 
     private generateWhileStatement(node: WhileStatement): void {
         const loopStart = this.ctx.bytecode.length;
+        this.ctx.continueTargets.push(loopStart);
 
         this.generateExpression(node.condition);
-        const exitJump = this.emitJump(OpCode.JZ);
-
-        this.ctx.continueTargets.push(loopStart);
-        this.ctx.breakTargets.push(exitJump);
+        const exitJumpPatch = this.emitJump(OpCode.JZ);
+        this.ctx.breakTargets.push(exitJumpPatch);
 
         this.generateStatement(node.body);
 
         this.emitLoop(loopStart);
-        this.patchJump(exitJump);
 
+        this.patchJump(this.ctx.breakTargets.pop()!);
         this.ctx.continueTargets.pop();
-        this.ctx.breakTargets.pop();
+    }
+
+    private generateBreakStatement(): void {
+        if (this.ctx.breakTargets.length === 0) {
+            throw new Error("Break statement must be inside a loop.");
+        }
+
+        const jumpPlaceholderAddress = this.emitJump(OpCode.JMP);
+        this.ctx.breakTargets.push(jumpPlaceholderAddress);
+    }
+
+    private generateContinueStatement(): void {
+        if (this.ctx.continueTargets.length === 0) {
+            throw new Error("Continue statement must be inside a loop.");
+        }
+        const continueTarget = this.ctx.continueTargets[this.ctx.continueTargets.length - 1];
+        this.emit(OpCode.JMP);
+        this.emit(continueTarget);
     }
 
     private generateReturnStatement(node: ReturnStatement): void {
@@ -858,15 +914,15 @@ export class GyroCodeGenerator {
         return index;
     }
 
-    private emitJump(instruction: OpCode): number {
-        this.emit(instruction);
+    private emitJump(op: OpCode): number {
+        this.emit(op);
         this.emit(0xFF);
         return this.ctx.bytecode.length - 1;
     }
 
-    private patchJump(offset: number): void {
+    private patchJump(address: number): void {
         const jump = this.ctx.bytecode.length;
-        this.ctx.bytecode[offset] = jump;
+        this.ctx.bytecode[address] = jump;
     }
 
     private emitLoop(loopStart: number): void {
