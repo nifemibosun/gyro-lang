@@ -7,7 +7,7 @@ import readline from 'readline';
 import { compile } from './codegen.js';
 import { GyroVM } from './vm.js';
 
-const GYRO_VERSION = '2.0.0';
+const GYRO_VERSION = '0.2.0';
 
 function printHelp() {
   console.log(`
@@ -31,7 +31,7 @@ Options:
   --output, -o       Specify output file (compile command)
   --verbose, -V      Enable verbose output
   --optimize, -O     Enable optimizations (if available)
-  --target           Target VM version (1.0, 2.0)
+  --target           Target VM version (0.1.0, 0.2.0)
 
 Examples:
   gyro run app.gyro
@@ -121,7 +121,6 @@ function showGBCInfo(gbc: any, filename: string) {
   if (gbc.metadata) {
     console.log(`Version: ${gbc.metadata.version || 'Unknown'}`);
     console.log(`Target: ${gbc.metadata.target || 'Unknown'}`);
-    console.log(`Memory Model: ${gbc.metadata.memoryModel || 'Unknown'}`);
     if (gbc.metadata.createdBy) console.log(`Created By: ${gbc.metadata.createdBy}`);
   }
 
@@ -148,7 +147,7 @@ function showGBCInfo(gbc: any, filename: string) {
 
 async function runWithDebug(source: string, options: any) {
   if (options.verbose) {
-    console.log('🔧 Compiling source code...');
+    console.log('Compiling source code...');
   }
   
   const compiled = compile(source);
@@ -164,7 +163,7 @@ async function runWithDebug(source: string, options: any) {
   const result = await vm.run();
   
   if (options.verbose) {
-    console.log(`\n✨ Execution complete. Result: ${result}`);
+    console.log(`\n Execution complete.`);
   }
   
   return result;
@@ -265,7 +264,6 @@ async function main() {
           metadata: {
             version: '0.2.0',
             target: 'gyro-vm',
-            memoryModel: options.target === '1.0' ? 'stack-only' : 'enhanced',
             createdBy: 'gyro-compiler-ts',
             timestamp: new Date().toISOString(),
             sourceFile: filename
@@ -403,17 +401,14 @@ async function main() {
         fs.mkdirSync(srcDir);
 
         const mainFile = path.join(srcDir, 'main.gyro');
-        fs.writeFileSync(mainFile, `
-fun main(): void {
+        fs.writeFileSync(mainFile, `fun main(): void {
     println("Hello, Gyro Hacker");
 }
-
-main();
         `);
 
         const config = {
           name: projectName,
-          version: '0.1.0',
+          version: '0.2.0',
           entry: 'src/main.gyro',
           outDir: 'dist',
           target: 'gyro-vm',
@@ -487,10 +482,7 @@ gyro debug src/main.gyro
   clear        Clear screen
   :help        Show this message
   :version     Show GYRO version
-  
-Try some code:
-  print("Hello World");
-  let x = 5 + 3; print(x);`);
+  `);
             rl.prompt();
             return;
           }

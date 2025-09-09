@@ -179,40 +179,19 @@ export interface ThrowStatement extends Statement {
     argument: Expression;
 }
 
-export interface ImportDeclaration extends Statement {
-    type: 'ImportDeclaration';
-    specifiers: ImportSpecifier[];
-    source: string;
-}
-
-export interface ImportSpecifier extends ASTNode {
-    type: 'ImportSpecifier';
-    imported: string;
-    local?: string;
-}
-
-export interface ExportDeclaration extends Statement {
-    type: 'ExportDeclaration';
-    declaration: Statement;
-}
-
 export interface Program extends ASTNode {
     type: 'Program';
     body: Statement[];
-    imports: ImportDeclaration[];
-    exports: ExportDeclaration[];
 }
 
-export type AnyASTNode = 
-    | Expression 
-    | Statement 
-    | Program 
-    | Parameter 
-    | ObjectField 
-    | FieldDeclaration 
-    | CatchClause 
-    | ImportSpecifier 
-    | TypeAnnotation;
+export type AnyASTNode =
+    | Expression
+    | Statement
+    | Program
+    | Parameter
+    | ObjectField
+    | FieldDeclaration
+    | CatchClause
 
 export class ASTFactory {
     static literal(value: any, dataType: 'number' | 'string' | 'boolean' | 'null', position?: any): LiteralExpression {
@@ -287,7 +266,7 @@ export class ASTFactory {
         return { type: 'FieldDeclaration', name, typeAnnotation, visibility, defaultValue };
     }
 
-    static program(body: Statement[], imports: ImportDeclaration[] = [], exports: ExportDeclaration[] = []): Program {
-        return { type: 'Program', body, imports, exports };
+    static program(body: Statement[]): Program {
+        return { type: 'Program', body };
     }
 }

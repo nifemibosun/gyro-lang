@@ -6,8 +6,7 @@ import {
     ArrayExpression, ObjectLiteralExpression, TypeAnnotation,
     Parameter, FieldDeclaration, ObjectField, TryStatement,
     CatchClause, ThrowStatement, ExpressionStatement, ForStatement,
-    BreakStatement, ContinueStatement, ASTFactory,
-    AssignmentExpression
+    BreakStatement, ContinueStatement, ASTFactory, AssignmentExpression,
 } from './ast.js';
 
 export class GyroParser {
@@ -20,8 +19,6 @@ export class GyroParser {
 
     parse(): Program {
         const statements: Statement[] = [];
-        const imports: any[] = [];
-        const exports: any[] = [];
 
         while (!this.isAtEnd()) {
             try {
@@ -33,7 +30,7 @@ export class GyroParser {
             }
         }
 
-        return ASTFactory.program(statements, imports, exports);
+        return ASTFactory.program(statements);
     }
 
     private declaration(): Statement | null {
@@ -42,7 +39,7 @@ export class GyroParser {
             if (this.match(TokenType.FUN)) return this.functionDeclaration();
             if (this.match(TokenType.LET, TokenType.CONST)) return this.variableDeclaration();
             if (this.match(TokenType.TRY)) return this.tryStatement();
-            
+           
             return this.statement();
         } catch (error) {
             this.synchronize();
@@ -143,22 +140,20 @@ export class GyroParser {
     }
 
     private typeAnnotation(): TypeAnnotation {
-        if (this.match(TokenType.INT, TokenType.STRING_TYPE, TokenType.BOOL, TokenType.VOID)) {
-            const typeName = this.previous().value;
-            return ASTFactory.typeAnnotation(typeName);
-        }
-        
         if (this.match(TokenType.IDENTIFIER)) {
-        const typeName = this.previous().value;
-        return ASTFactory.typeAnnotation(typeName);
-    }
-        let nullable = false;
-        if (this.match(TokenType.QUESTION)) {
-            nullable = true;
+            const typeName = this.previous().value;
+            let nullable = false;
+
+            if (this.match(TokenType.QUESTION)) {
+                nullable = true;
+            }
+
+            return ASTFactory.typeAnnotation(typeName, undefined, nullable);
         }
 
         throw this.error(this.peek(), "Expected type name");
     }
+
 
     private statement(): Statement {
         if (this.match(TokenType.IF)) return this.ifStatement();

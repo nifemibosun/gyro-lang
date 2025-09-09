@@ -18,8 +18,7 @@
     "gyro": "./dist/cli.js"
   },
   "scripts": {
-    "build": "tsc",
-    "build-link": "tsc && npm link"
+    "build": "tsc && npm link"
   },
   "devDependencies": {
     "@types/node": "^24.0.10",

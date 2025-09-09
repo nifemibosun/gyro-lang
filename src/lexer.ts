@@ -7,8 +7,6 @@ export enum TokenType {
     TRUE, FALSE, NULL,
     LET, CONST,
 
-    // Type Keywords
-    INT, UINT, FLOAT, DOUBLE, STRING_TYPE, BOOL, VOID,
     ARRAY, OBJECT, ANY,
 
     // Object-Oriented
@@ -20,9 +18,6 @@ export enum TokenType {
 
     // Memory Management
     MALLOC, FREE,
-
-    // Import/Export
-    IMPORT, EXPORT, FROM, AS,
 
     // Operators - Arithmetic
     PLUS, MINUS, STAR, SLASH, PERCENT,
@@ -81,17 +76,9 @@ const keywords: Record<string, TokenType> = {
     'false': TokenType.FALSE,
     'null': TokenType.NULL,
 
-    // Type annotations
-    'int': TokenType.INT,
-    'uint': TokenType.UINT,
-    'float': TokenType.FLOAT,
-    'double': TokenType.DOUBLE,
-    'string': TokenType.STRING_TYPE,
-    'bool': TokenType.BOOL,
-    'void': TokenType.VOID,
-    'array': TokenType.ARRAY,
-    'object': TokenType.OBJECT,
-    'any': TokenType.ANY,
+    // 'array': TokenType.ARRAY,
+    // 'object': TokenType.OBJECT,
+    // 'any': TokenType.ANY,
 
     // Object-oriented
     'class': TokenType.CLASS,
@@ -113,12 +100,6 @@ const keywords: Record<string, TokenType> = {
     // Memory management
     'malloc': TokenType.MALLOC,
     'free': TokenType.FREE,
-
-    // Modules
-    'import': TokenType.IMPORT,
-    'export': TokenType.EXPORT,
-    'from': TokenType.FROM,
-    'as': TokenType.AS,
 };
 
 export class GyroLexer {
@@ -144,7 +125,7 @@ export class GyroLexer {
             line: this.line,
             column: this.column
         });
-
+        
         return this.tokens;
     }
 
@@ -272,7 +253,7 @@ export class GyroLexer {
 
             case '\n':
                 this.line++;
-                this.column = 0;
+                this.column = 1;
                 break;
 
             default:

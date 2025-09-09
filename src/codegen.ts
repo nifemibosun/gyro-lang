@@ -178,10 +178,19 @@ export class GyroCodeGenerator {
     private validateVariableDeclarationTypes(node: VariableDeclaration): void {
         if (node.initializer) {
             const inferredType = this.typeInference.inferExpressionType(node.initializer);
-            if (node.typeAnnotation && node.typeAnnotation.name !== inferredType.name) {
-                throw new Error(`Type mismatch: Cannot assign '${inferredType.name}' to variable of type '${node.typeAnnotation.name}'`);
+
+            if (node.typeAnnotation) {
+                const expected = this.normalizeTypeName(node.typeAnnotation.name);
+                const actual = this.normalizeTypeName(inferredType.name);
+
+                if (expected !== actual) {
+                    throw new Error(
+                        `Type mismatch: Cannot assign '${actual}' to variable of type '${expected}'`
+                    );
+                }
             }
         }
+
         if (node.typeAnnotation) {
             this.typeInference.registerVariable(node.name, node.typeAnnotation);
         }
@@ -311,14 +320,17 @@ export class GyroCodeGenerator {
                 this.generateStatement(stmt);
             }
         }
-        
+
         for (const stmt of ast.body) {
-            if (stmt.type !== 'FunctionDeclaration' && stmt.type !== 'ClassDeclaration' && stmt.type !== 'VariableDeclaration') {
-               if(stmt.type !== 'VariableDeclaration') {
-                 throw new Error(`Unexpected top-level statement of type '${stmt.type}'. All executable code must be inside a function.`);
-               }
+            switch (stmt.type) {
+                case 'FunctionDeclaration':
+                case 'ClassDeclaration':
+                case 'VariableDeclaration':
+                    break;
+                default:
+                    throw new Error(`Unexpected top-level statement of type '${stmt.type}'. All executable code must be inside a function.`);
             }
-       }
+        }
 
         const finalMainAddress = this.ctx.functions.get('main')?.address;
         if (finalMainAddress === undefined) {
@@ -587,6 +599,25 @@ export class GyroCodeGenerator {
     private generateThrowStatement(node: ThrowStatement): void {
         this.generateExpression(node.argument);
         this.emit(OpCode.THROW);
+    }
+
+    private normalizeTypeName(type: string): string {
+        switch (type) {
+            case 'int':
+                return 'int';
+            case 'uint':
+                return 'uint';
+            case 'float':
+                return 'float';
+            case 'bool':
+                return 'bool';
+            case 'string':
+                return 'string';
+            case 'void':
+                return 'void';
+            default:
+                return type;
+        }
     }
 
     private generateExpression(expr: Expression): void {
@@ -936,9 +967,6 @@ export function compile(source: string): CompilationResult {
         const tokens = tokenize(source);
         const ast = parse(tokens);
         const codegen = new GyroCodeGenerator();
-
-        codegen.collectDeclarations(ast);
-        codegen.validateTypes(ast);
 
         return codegen.compile(ast);
     } catch (error) {
