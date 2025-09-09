@@ -90,19 +90,28 @@ export class GyroVM {
 
   private ensureStack(size: number) {
     if (this.stack.length < size) {
-      const opcode = this.bytecode[this.ip - 1];
-      throw new Error(`Stack underflow at ${OpcodeName[opcode] || `OP_${opcode}`}, need ${size}, got ${this.stack.length}`);
+      const opcode = this.bytecode[Math.max(0, this.ip - 1)];
+      const name = OpcodeName[opcode] || `OP_${opcode}`;
+      throw new Error(`Stack underflow at ip=${this.ip - 1} (${name}), need ${size}, got ${this.stack.length}`);
+    }
+  }
+
+  private ensureIpAvailable(n: number) {
+    if (this.ip + n - 1 >= this.bytecode.length) {
+      throw new Error(`Unexpected EOF: need ${n} bytes at ip=${this.ip}`);
     }
   }
 
   private readByte(): number {
-    const byte = this.bytecode[this.ip++];
-    if (byte === undefined) throw new Error(`Unexpected EOF at ip=${this.ip - 1}`);
-    return byte;
+    this.ensureIpAvailable(1);
+    return this.bytecode[this.ip++];
   }
 
   private readShort(): number {
-    return (this.readByte() << 8) | this.readByte();
+    this.ensureIpAvailable(2);
+    const hi = this.bytecode[this.ip++];
+    const lo = this.bytecode[this.ip++];
+    return (hi << 8) | lo;
   }
 
   private allocateMemory(size: number): number {
@@ -118,14 +127,23 @@ export class GyroVM {
     const block = this.memory.get(address);
     if (block) {
       block.allocated = false;
-      this.memory.delete(address);
+      block.data.fill(null);
     }
   }
 
   private findExceptionHandler(ip: number): ExceptionHandler | null {
-    return this.exceptionHandlers.find(handler => 
-      ip >= handler.tryStart && ip <= handler.tryEnd
-    ) || null;
+    let best: ExceptionHandler | null = null;
+    for (const h of this.exceptionHandlers) {
+      if (ip >= h.tryStart && ip <= h.tryEnd) {
+        if (!best || h.tryStart > best.tryStart) best = h;
+      }
+    }
+    return best;
+  }
+
+  private pop<T extends GyroValue>(): T {
+    this.ensureStack(1);
+    return this.stack.pop() as T;
   }
 
   async run(): Promise<GyroValue | undefined> {
@@ -157,7 +175,7 @@ export class GyroVM {
 
           case OpCode.POP:
             this.ensureStack(1);
-            this.stack.pop();
+            this.pop();
             break;
 
           case OpCode.DUP:
@@ -167,8 +185,8 @@ export class GyroVM {
 
           case OpCode.SWAP:
             this.ensureStack(2);
-            const top = this.stack.pop()!;
-            const below = this.stack.pop()!;
+            const top = this.pop()!;
+            const below = this.pop()!;
             this.stack.push(top, below);
             break;
 
@@ -177,8 +195,8 @@ export class GyroVM {
           case OpCode.MUL:
           case OpCode.DIV: {
             this.ensureStack(2);
-            const b = this.stack.pop() as number;
-            const a = this.stack.pop() as number;
+            const b = this.pop<number>();
+            const a = this.pop<number>() as number;
             let result = 0;
             switch (op) {
               case OpCode.ADD: result = a + b; break;
@@ -195,19 +213,19 @@ export class GyroVM {
 
           case OpCode.MOD:
             this.ensureStack(2);
-            const modB = this.stack.pop() as number;
-            const modA = this.stack.pop() as number;
+            const modB = this.pop<number>();
+            const modA = this.pop<number>() as number;
             this.stack.push(modA % modB);
             break;
 
           case OpCode.NEG:
             this.ensureStack(1);
-            this.stack.push(-(this.stack.pop() as number));
+            this.stack.push(-(this.pop<number>()));
             break;
 
           case OpCode.NOT:
             this.ensureStack(1);
-            this.stack.push(!this.stack.pop());
+            this.stack.push(!this.pop());
             break;
 
           case OpCode.EQ:
@@ -217,8 +235,8 @@ export class GyroVM {
           case OpCode.LT:
           case OpCode.LTE: {
             this.ensureStack(2);
-            const right = this.stack.pop();
-            const left = this.stack.pop();
+            const right = this.pop();
+            const left = this.pop();
             let bool = false;
             switch (op) {
               case OpCode.EQ: bool = left === right; break;
@@ -239,7 +257,7 @@ export class GyroVM {
           case OpCode.JZ:
           case OpCode.JNZ: {
             const addr = this.readByte();
-            const cond = this.stack.pop();
+            const cond = this.pop();
             const isTrue = !!cond;
             if ((op === OpCode.JZ && !isTrue) || (op === OpCode.JNZ && isTrue)) {
               this.ip = addr;
@@ -257,7 +275,7 @@ export class GyroVM {
           }
 
           case OpCode.RET: {
-            const retVal = this.stack.pop();
+            const retVal = this.pop();
             const frame = this.callStack.pop();
             if (!frame) {
               this.running = false;
@@ -266,7 +284,7 @@ export class GyroVM {
             }
             this.ip = frame.returnIp;
             this.framePointer = frame.framePointer;
-            while (this.stack.length > this.framePointer) this.stack.pop();
+            while (this.stack.length > this.framePointer) this.pop();
             this.stack.push(retVal);
             break;
           }
@@ -279,7 +297,7 @@ export class GyroVM {
               throw new Error(`Local variable access out of bounds at offset ${offset}`);
             }
             if (op === OpCode.STORE_LOCAL) {
-              this.stack[index] = this.stack.pop();
+              this.stack[index] = this.pop();
             } else {
               this.stack.push(this.stack[index]);
             }
@@ -287,7 +305,7 @@ export class GyroVM {
           }
 
           case OpCode.STORE_GLOBAL:
-            this.globals.set(this.readByte(), this.stack.pop());
+            this.globals.set(this.readByte(), this.pop());
             break;
 
           case OpCode.LOAD_GLOBAL: {
@@ -300,7 +318,7 @@ export class GyroVM {
 
           case OpCode.PRINT_LN:
             this.ensureStack(1);
-            console.log(this.stack.pop());
+            console.log(this.pop());
             this.stack.push(null);
             break;
 
@@ -316,7 +334,7 @@ export class GyroVM {
 
           case OpCode.ARRAY_CREATE: {
             this.ensureStack(1);
-            const size = this.stack.pop();
+            const size = this.pop();
             if (typeof size !== 'number' || size < 0 || !Number.isInteger(size)) {
               throw new Error(`Invalid array size: ${size}`);
             }
@@ -326,8 +344,8 @@ export class GyroVM {
 
           case OpCode.ARRAY_GET: {
             this.ensureStack(2);
-            const index = this.stack.pop() as number;
-            const arr = this.stack.pop();
+            const index = this.pop<number>();
+            const arr = this.pop();
             if (!Array.isArray(arr)) throw new Error("ARRAY_GET expects an array");
             this.stack.push(arr[index]);
             break;
@@ -335,9 +353,9 @@ export class GyroVM {
 
           case OpCode.ARRAY_SET: {
             this.ensureStack(3);
-            const value = this.stack.pop();
-            const index = this.stack.pop() as number;
-            const arr = this.stack.pop();
+            const value = this.pop();
+            const index = this.pop<number>();
+            const arr = this.pop();
             if (!Array.isArray(arr)) throw new Error("ARRAY_SET expects an array");
             arr[index] = value;
             break;
@@ -345,15 +363,15 @@ export class GyroVM {
 
           case OpCode.STRING_CONCAT: {
             this.ensureStack(2);
-            const b = this.stack.pop();
-            const a = this.stack.pop();
+            const b = this.pop();
+            const a = this.pop();
             this.stack.push(String(a) + String(b));
             break;
           }
 
           case OpCode.STRING_LENGTH: {
             this.ensureStack(1);
-            const str = this.stack.pop();
+            const str = this.pop();
             if (typeof str !== 'string') throw new Error("STRING_LENGTH expects a string");
             this.stack.push(str.length);
             break;
@@ -361,9 +379,9 @@ export class GyroVM {
 
           case OpCode.STRING_SUBSTR: {
             this.ensureStack(3);
-            const end = this.stack.pop() as number;
-            const start = this.stack.pop() as number;
-            const str = this.stack.pop();
+            const end = this.pop<number>();
+            const start = this.pop<number>();
+            const str = this.pop();
             if (typeof str !== 'string') throw new Error("STRING_SUBSTR expects a string");
             this.stack.push(str.substring(start, end));
             break;
@@ -371,8 +389,8 @@ export class GyroVM {
 
           case OpCode.STRING_CHAR_AT: {
             this.ensureStack(2);
-            const index = this.stack.pop() as number;
-            const str = this.stack.pop();
+            const index = this.pop<number>();
+            const str = this.pop();
             if (typeof str !== 'string') throw new Error("STRING_CHAR_AT expects a string");
             this.stack.push(str.charAt(index));
             break;
@@ -380,8 +398,8 @@ export class GyroVM {
 
           case OpCode.STRING_INDEX_OF: {
             this.ensureStack(2);
-            const searchStr = this.stack.pop();
-            const str = this.stack.pop();
+            const searchStr = this.pop();
+            const str = this.pop();
             if (typeof str !== 'string' || typeof searchStr !== 'string') {
               throw new Error("STRING_INDEX_OF expects two strings");
             }
@@ -391,7 +409,7 @@ export class GyroVM {
 
           case OpCode.STRING_TO_INT: {
             this.ensureStack(1);
-            const str = this.stack.pop();
+            const str = this.pop();
             if (typeof str !== 'string') throw new Error("STRING_TO_INT expects a string");
             const num = parseInt(str, 10);
             this.stack.push(isNaN(num) ? 0 : num);
@@ -400,7 +418,7 @@ export class GyroVM {
 
           case OpCode.INT_TO_STRING: {
             this.ensureStack(1);
-            const num = this.stack.pop();
+            const num = this.pop();
             if (typeof num !== 'number') throw new Error("INT_TO_STRING expects a number");
             this.stack.push(String(num));
             break;
@@ -408,8 +426,8 @@ export class GyroVM {
 
           case OpCode.STRING_COMPARE: {
             this.ensureStack(2);
-            const b = this.stack.pop();
-            const a = this.stack.pop();
+            const b = this.pop();
+            const a = this.pop();
             if (typeof a !== 'string' || typeof b !== 'string') {
               throw new Error("STRING_COMPARE expects two strings");
             }
@@ -424,7 +442,7 @@ export class GyroVM {
 
           case OpCode.OBJECT_NEW: {
             this.ensureStack(1);
-            const className = this.stack.pop() as string;
+            const className = this.pop() as string;
             const classDef = this.classes.get(className);
             if (!classDef) throw new Error(`Unknown class: ${className}`);
             
@@ -443,8 +461,8 @@ export class GyroVM {
 
           case OpCode.FIELD_GET: {
             this.ensureStack(2);
-            const fieldName = this.stack.pop() as string;
-            const obj = this.stack.pop() as GyroObject;
+            const fieldName = this.pop() as string;
+            const obj = this.pop() as GyroObject;
             if (!obj || typeof obj !== 'object' || !('className' in obj)) {
               throw new Error("FIELD_GET expects an object");
             }
@@ -455,9 +473,9 @@ export class GyroVM {
 
           case OpCode.FIELD_SET: {
             this.ensureStack(3);
-            const value = this.stack.pop();
-            const fieldName = this.stack.pop() as string;
-            const obj = this.stack.pop() as GyroObject;
+            const value = this.pop();
+            const fieldName = this.pop() as string;
+            const obj = this.pop() as GyroObject;
             if (!obj || typeof obj !== 'object' || !('className' in obj)) {
               throw new Error("FIELD_SET expects an object");
             }
@@ -494,8 +512,8 @@ export class GyroVM {
 
           case OpCode.INSTANCEOF: {
             this.ensureStack(2);
-            const className = this.stack.pop() as string;
-            const obj = this.stack.pop();
+            const className = this.pop() as string;
+            const obj = this.pop();
             const result = obj && typeof obj === 'object' && 
                           'className' in obj && 
                           (obj as GyroObject).className === className;
@@ -505,7 +523,7 @@ export class GyroVM {
 
           case OpCode.MALLOC: {
             this.ensureStack(1);
-            const size = this.stack.pop() as number;
+            const size = this.pop<number>();
             if (typeof size !== 'number' || size <= 0) {
               throw new Error("MALLOC expects positive size");
             }
@@ -516,7 +534,7 @@ export class GyroVM {
 
           case OpCode.FREE: {
             this.ensureStack(1);
-            const ptr = this.stack.pop() as GyroPointer;
+            const ptr = this.pop() as GyroPointer;
             if (!ptr || typeof ptr !== 'object' || !('address' in ptr)) {
               throw new Error("FREE expects a pointer");
             }
@@ -526,17 +544,21 @@ export class GyroVM {
 
           case OpCode.MEMCPY: {
             this.ensureStack(3);
-            const size = this.stack.pop() as number;
-            const src = this.stack.pop() as GyroPointer;
-            const dest = this.stack.pop() as GyroPointer;
-            
+            const size = this.pop<number>();
+            const src = this.pop<GyroPointer>();
+            const dest = this.pop<GyroPointer>();
+
             const srcBlock = this.memory.get(src.address);
             const destBlock = this.memory.get(dest.address);
-            
-            if (!srcBlock || !destBlock) {
-              throw new Error("MEMCPY: Invalid memory address");
+
+            if (!srcBlock || !srcBlock.allocated || !destBlock || !destBlock.allocated) {
+              throw new Error("MEMCPY: Invalid or freed memory");
             }
-            
+
+            if (size < 0 || size > srcBlock.data.length || size > destBlock.data.length) {
+              throw new Error("MEMCPY: Out of bounds");
+            }
+
             for (let i = 0; i < size; i++) {
               destBlock.data[i] = srcBlock.data[i];
             }
@@ -545,21 +567,31 @@ export class GyroVM {
 
           case OpCode.PTR_GET: {
             this.ensureStack(2);
-            const offset = this.stack.pop() as number;
-            const ptr = this.stack.pop() as GyroPointer;
+            const offset = this.pop<number>();
+            const ptr = this.pop() as GyroPointer;
             const block = this.memory.get(ptr.address);
-            if (!block) throw new Error("PTR_GET: Invalid memory address");
+            if (!block || !block.allocated) {
+              throw new Error("PTR_GET: Invalid or freed memory address");
+            }
+            if (offset < 0 || offset >= block.data.length) {
+              throw new Error("PTR_GET: Out of bounds");
+            }
             this.stack.push(block.data[offset]);
             break;
           }
 
           case OpCode.PTR_SET: {
             this.ensureStack(3);
-            const value = this.stack.pop();
-            const offset = this.stack.pop() as number;
-            const ptr = this.stack.pop() as GyroPointer;
+            const value = this.pop();
+            const offset = this.pop<number>();
+            const ptr = this.pop() as GyroPointer;
             const block = this.memory.get(ptr.address);
-            if (!block) throw new Error("PTR_SET: Invalid memory address");
+            if (!block || !block.allocated) {
+              throw new Error("PTR_SET: Invalid or freed memory address");
+            }
+            if (offset < 0 || offset >= block.data.length) {
+              throw new Error("PTR_SET: Out of bounds");
+            }
             block.data[offset] = value;
             break;
           }
@@ -574,8 +606,8 @@ export class GyroVM {
 
           case OpCode.SOCKET_BIND: {
             this.ensureStack(2);
-            const port = this.stack.pop() as number;
-            const socketId = this.stack.pop() as number;
+            const port = this.pop<number>();
+            const socketId = this.pop<number>();
             
             const server = net.createServer();
             server.listen(port);
@@ -586,7 +618,7 @@ export class GyroVM {
 
           case OpCode.SOCKET_LISTEN: {
             this.ensureStack(1);
-            const socketId = this.stack.pop() as number;
+            const socketId = this.pop<number>();
             const server = this.sockets.get(socketId) as net.Server;
             if (!server) throw new Error("Invalid socket ID");
             this.stack.push(true);
@@ -595,18 +627,18 @@ export class GyroVM {
 
           case OpCode.SOCKET_SEND: {
             this.ensureStack(2);
-            const data = this.stack.pop() as string;
-            const socketId = this.stack.pop() as number;
+            const data = this.pop() as string;
+            const socketId = this.pop<number>();
             const socket = this.sockets.get(socketId) as net.Socket;
             if (!socket) throw new Error("Invalid socket ID");
-            socket.write;
+            socket.write(typeof data === 'string' ? data : String(data));
             this.stack.push(true);
             break;
           }
 
           case OpCode.SOCKET_CLOSE: {
             this.ensureStack(1);
-            const socketId = this.stack.pop() as number;
+            const socketId = this.pop<number>();
             const socket = this.sockets.get(socketId);
             if (socket) {
               if ('close' in socket) socket.close();
@@ -639,7 +671,7 @@ export class GyroVM {
 
           case OpCode.THROW: {
             this.ensureStack(1);
-            const exception = this.stack.pop();
+            const exception = this.pop();
             this.currentException = exception;
             
             const handler = this.findExceptionHandler(this.ip);
@@ -680,10 +712,10 @@ export class GyroVM {
     if (this.rl) this.rl.close();
     
     for (const socket of this.sockets.values()) {
-      if ('close' in socket) socket.close();
-      else socket.destroy();
+      if (socket instanceof net.Server) socket.close();
+      else if (socket instanceof net.Socket) socket.destroy();
     }
     
-    return this.stack.pop();
+    return this.pop();
   }
 }
