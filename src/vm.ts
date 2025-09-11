@@ -44,6 +44,7 @@ export class GyroVM {
   private ip = 0;
   private bytecode: number[];
   private constantPool: GyroValue[];
+  private cliArgs: string[];
   private classes: Map<string, GyroClass> = new Map();
   private running = true;
 
@@ -61,9 +62,10 @@ export class GyroVM {
 
   private rl: readline.Interface | null = null;
 
-  constructor(gbc: any) {
+  constructor(gbc: any, cliArgs: string[] = []) {
     this.bytecode = gbc.bytecode || [];
     this.constantPool = gbc.constantPool || [];
+    this.cliArgs = Array.isArray(cliArgs) ? cliArgs.slice() : [];
     
     if (gbc.classes) {
       for (const classDef of gbc.classes) {
@@ -313,6 +315,12 @@ export class GyroVM {
             const value = this.globals.get(index);
             if (value === undefined) throw new Error(`Access to uninitialized global at index ${index}`);
             this.stack.push(value);
+            break;
+          }
+
+          case OpCode.LOAD_ARGS: {
+            const arr = this.cliArgs.slice();
+            this.stack.push(arr);
             break;
           }
 

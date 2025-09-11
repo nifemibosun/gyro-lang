@@ -302,17 +302,31 @@ export class GyroCodeGenerator {
     private generateProgram(ast: Program): void {
         const mainFuncDef = this.ctx.functions.get('main');
         if (!mainFuncDef) {
-            throw new Error("Compilation Error: No 'main' function found. The 'main' function is required as the program entry point.");
+            throw new Error("Compilation Error: 'main' function is required as the program entry point.");
         }
         
-        if (mainFuncDef.parameters.length > 0) {
+        if (mainFuncDef.parameters.length > 1) {
             throw new Error("Compilation Error: The 'main' function cannot accept any arguments.");
+        }
+
+        if (mainFuncDef.parameters.length === 1) {
+            const param = mainFuncDef.parameters[0];
+            if (param.type !== "string[]") {
+                throw new Error("Compilation Error: The 'main' parameter must be of type 'string[]'");
+            }
         }
 
         this.emit(OpCode.CALL);
         const mainCallAddressOffset = this.ctx.bytecode.length;
-        this.emit(0xFFFF);
-        this.emit(0);
+
+        if (mainFuncDef.parameters.length === 1) {
+            this.emit(OpCode.LOAD_ARGS);
+            this.emit(1);
+        } else {
+            this.emit(0xFFFF);
+            this.emit(0);
+        }
+        
         this.emit(OpCode.HALT);
 
         for (const stmt of ast.body) {

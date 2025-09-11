@@ -37,6 +37,7 @@ export enum OpCode {
     STORE_GLOBAL = 0x41,
     LOAD_LOCAL = 0x42,
     STORE_LOCAL = 0x43,
+    LOAD_ARGS = 0x44,
 
     PRINT_LN = 0x50,
     INPUT = 0x51,
