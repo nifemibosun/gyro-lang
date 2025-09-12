@@ -10,9 +10,8 @@ export enum TokenType {
     ARRAY, OBJECT, ANY,
 
     // Object-Oriented
-    CLASS, SELF, EXTENDS, SUPER, CONSTRUCTOR,
-    STATIC, PRIVATE, PUBLIC, PROTECTED,
-
+    CLASS, SELF, EXTENDS, CONSTRUCTOR,
+    PUBLIC, STATIC,
     // Exception Handling
     TRY, CATCH, FINALLY, THROW,
 
@@ -25,8 +24,8 @@ export enum TokenType {
     PLUS_EQUAL, MINUS_EQUAL, STAR_EQUAL, SLASH_EQUAL,
 
     // Operators - Comparison
-    EQUAL, EQUAL_EQUAL, EQUAL_EQUAL_EQUAL,
-    BANG, BANG_EQUAL, BANG_EQUAL_EQUAL,
+    EQUAL, EQUAL_EQUAL,
+    BANG, BANG_EQUAL,
     GREATER, GREATER_EQUAL,
     LESS, LESS_EQUAL,
 
@@ -84,12 +83,9 @@ const keywords: Record<string, TokenType> = {
     'class': TokenType.CLASS,
     'self': TokenType.SELF,
     'extends': TokenType.EXTENDS,
-    'super': TokenType.SUPER,
     'constructor': TokenType.CONSTRUCTOR,
     'static': TokenType.STATIC,
-    'private': TokenType.PRIVATE,
     'public': TokenType.PUBLIC,
-    'protected': TokenType.PROTECTED,
 
     // Exception handling
     'try': TokenType.TRY,
@@ -180,11 +176,7 @@ export class GyroLexer {
 
             case '!':
                 if (this.match('=')) {
-                    if (this.match('=')) {
-                        this.addToken(TokenType.BANG_EQUAL_EQUAL, undefined, startCol);
-                    } else {
-                        this.addToken(TokenType.BANG_EQUAL, undefined, startCol);
-                    }
+                    this.addToken(TokenType.BANG_EQUAL, undefined, startCol);
                 } else {
                     this.addToken(TokenType.BANG, undefined, startCol);
                 }
@@ -192,11 +184,7 @@ export class GyroLexer {
 
             case '=':
                 if (this.match('=')) {
-                    if (this.match('=')) {
-                        this.addToken(TokenType.EQUAL_EQUAL_EQUAL, undefined, startCol);
-                    } else {
-                        this.addToken(TokenType.EQUAL_EQUAL, undefined, startCol);
-                    }
+                    this.addToken(TokenType.EQUAL_EQUAL, undefined, startCol);
                 } else if (this.match('>')) {
                     this.addToken(TokenType.ARROW, undefined, startCol);
                 } else {

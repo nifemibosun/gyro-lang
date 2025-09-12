@@ -1,6 +1,11 @@
 import { OpCode, OpcodeName } from './opcodes.js';
+// @ts-ignore
 import readline from 'readline';
+// @ts-ignore
 import * as net from 'net';
+// @ts-ignore
+import process from 'process';
+
 
 type GyroValue = number | string | boolean | null | undefined | any[] | GyroObject | GyroPointer;
 

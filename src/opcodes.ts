@@ -127,6 +127,7 @@ export const OpcodeName: Record<number, string> = {
     [OpCode.STORE_GLOBAL]: "STORE_GLOBAL",
     [OpCode.LOAD_LOCAL]: "LOAD_LOCAL",
     [OpCode.STORE_LOCAL]: "STORE_LOCAL",
+    [OpCode.LOAD_ARGS]: "LOAD_ARGS",
 
     [OpCode.PRINT_LN]: "PRINT_LN",
     [OpCode.INPUT]: "INPUT",

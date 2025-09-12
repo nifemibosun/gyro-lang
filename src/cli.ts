@@ -1,7 +1,12 @@
 #!/usr/bin/env node
 
+// @ts-ignore
 import fs from 'fs';
+// @ts-ignore
 import path from 'path';
+// @ts-ignore
+import process from 'process';
+// @ts-ignore
 import readline from 'readline';
 
 import { compile } from './codegen.js';
@@ -209,15 +214,16 @@ async function main() {
         if (filename.endsWith('.gbc')) {
           const content = fs.readFileSync(filename, 'utf-8');
           const gbc = JSON.parse(content);
-          
+
           const validation = validateGBC(gbc);
           if (!validation.valid) {
             console.error('Invalid GBC file:');
             validation.errors.forEach(err => console.error(`   ${err}`));
             return;
           }
-          
-          const vm = new GyroVM(gbc);
+
+          const vmArgs = process.argv.slice(process.argv.indexOf(file) + 1); 
+          const vm = new GyroVM(gbc, vmArgs);
           await vm.run();
         } else {
           const source = fs.readFileSync(filename, 'utf-8');
@@ -462,7 +468,7 @@ gyro debug src/main.gyro
 
         rl.prompt();
 
-        rl.on('line', async (line) => {
+        rl.on('line', async (line: any) => {
           const trimmed = line.trim();
           
           if (trimmed.toLowerCase() === 'exit') {

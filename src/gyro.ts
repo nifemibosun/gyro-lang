@@ -1,3 +1,4 @@
+// @ts-ignore
 import fs from 'fs';
 import { compile } from './codegen.js';
 import { GyroVM } from './vm.js';
