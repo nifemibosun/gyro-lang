@@ -1,0 +1,14 @@
+// Function to find factorial of a number
+
+fun factorial(n: int): int {
+    if (n <= 1) {
+        return 1;
+    }
+
+    return n * factorial(n - 1);
+}
+
+fun main(): void {
+    let factorial5: int = factorial(5);
+    println("5! = " + factorial5);
+}

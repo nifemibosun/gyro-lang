@@ -1,4 +1,4 @@
-import { Token } from './lexer.js';
+import type { Token } from './lexer.ts';
 
 export interface ASTNode {
     type: string;
@@ -148,7 +148,6 @@ export interface ContinueStatement extends Statement {
 export interface ClassDeclaration extends Statement {
     type: 'ClassDeclaration';
     name: string;
-    superClass?: string;
     fields: FieldDeclaration[];
     methods: FunctionDeclaration[];
 }
@@ -179,19 +178,24 @@ export interface ThrowStatement extends Statement {
     argument: Expression;
 }
 
+export interface ImportStatement extends Statement {
+    type: 'ImportStatement';
+    specifiers: ImportSpecifier[];
+    source: string;
+}
+
+export interface ImportSpecifier extends ASTNode {
+    type: 'ImportSpecifier';
+    imported: string;
+    local?: string;
+    isNamespace?: boolean;
+}
+
 export interface Program extends ASTNode {
     type: 'Program';
     body: Statement[];
 }
 
-export type AnyASTNode =
-    | Expression
-    | Statement
-    | Program
-    | Parameter
-    | ObjectField
-    | FieldDeclaration
-    | CatchClause
 
 export class ASTFactory {
     static literal(value: any, dataType: 'number' | 'string' | 'boolean' | 'null', position?: any): LiteralExpression {
@@ -234,8 +238,8 @@ export class ASTFactory {
         return { type: 'FunctionDeclaration', name, parameters, returnType, body };
     }
 
-    static classDecl(name: string, fields: FieldDeclaration[], methods: FunctionDeclaration[], superClass?: string): ClassDeclaration {
-        return { type: 'ClassDeclaration', name, superClass, fields, methods };
+    static classDecl(name: string, fields: FieldDeclaration[], methods: FunctionDeclaration[]): ClassDeclaration {
+        return { type: 'ClassDeclaration', name, fields, methods };
     }
 
     static block(statements: Statement[]): BlockStatement {

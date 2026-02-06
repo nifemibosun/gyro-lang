@@ -1,6 +1,7 @@
 import { TokenType } from './lexer.js';
-import {
-    Expression, Statement, TypeAnnotation, ASTFactory,
+import { ASTFactory } from './ast.js';
+import type {
+    Expression, Statement, TypeAnnotation,
     LiteralExpression, BinaryExpression, UnaryExpression,
     CallExpression, IdentifierExpression, ArrayExpression,
     ObjectLiteralExpression, AssignmentExpression,
@@ -73,7 +74,7 @@ export class TypeInferenceEngine {
         const leftType = this.inferExpressionType(expr.left);
         const rightType = this.inferExpressionType(expr.right);
 
-        switch (expr.operator.type) {
+        switch (expr.operator.t_type) {
             case TokenType.PLUS:
                 if (leftType.name === 'string' || rightType.name === 'string') {
                     return ASTFactory.typeAnnotation('string');
@@ -106,10 +107,8 @@ export class TypeInferenceEngine {
     private inferUnaryExpressionType(expr: UnaryExpression): TypeAnnotation {
         const operandType = this.inferExpressionType(expr.operand);
 
-        switch (expr.operator.type) {
+        switch (expr.operator.t_type) {
             case TokenType.MINUS:
-            case TokenType.PLUS_PLUS:
-            case TokenType.MINUS_MINUS:
                 return operandType;
 
             case TokenType.BANG:
@@ -182,7 +181,8 @@ export class TypeInferenceEngine {
         
         for (const returnType of returnTypes) {
             if (returnType.name !== declaredType && returnType.name !== 'void') {
-                console.warn(`Warning: Return type '${returnType.name}' doesn't match declared type '${declaredType}' in function '${func.name}'`);
+                console.error(`Return type '${returnType.name}' doesn't match declared type '${declaredType}' in function '${func.name}'`);
+                return;
             }
         }
     }

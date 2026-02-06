@@ -10,17 +10,17 @@ export enum TokenType {
     ARRAY, OBJECT, ANY,
 
     // Object-Oriented
-    CLASS, SELF, EXTENDS, CONSTRUCTOR,
+    CLASS, SELF, CONSTRUCTOR,
     PUBLIC, STATIC,
+
     // Exception Handling
     TRY, CATCH, FINALLY, THROW,
 
-    // Memory Management
-    MALLOC, FREE,
+    // Module System
+    IMPORT, FROM, AS,
 
     // Operators - Arithmetic
     PLUS, MINUS, STAR, SLASH, PERCENT,
-    PLUS_PLUS, MINUS_MINUS,
     PLUS_EQUAL, MINUS_EQUAL, STAR_EQUAL, SLASH_EQUAL,
 
     // Operators - Comparison
@@ -38,21 +38,14 @@ export enum TokenType {
     LEFT_BRACKET, RIGHT_BRACKET,
     COMMA, DOT, SEMICOLON,
     COLON, QUESTION,
-    ARROW,
 
     // End of File
     EOF
 }
 
 export interface Token {
-    type: TokenType;
+    t_type: TokenType;
     value?: any;
-    line: number;
-    column: number;
-    length?: number;
-}
-
-export interface Position {
     line: number;
     column: number;
 }
@@ -82,7 +75,6 @@ const keywords: Record<string, TokenType> = {
     // Object-oriented
     'class': TokenType.CLASS,
     'self': TokenType.SELF,
-    'extends': TokenType.EXTENDS,
     'constructor': TokenType.CONSTRUCTOR,
     'static': TokenType.STATIC,
     'public': TokenType.PUBLIC,
@@ -93,9 +85,10 @@ const keywords: Record<string, TokenType> = {
     'finally': TokenType.FINALLY,
     'throw': TokenType.THROW,
 
-    // Memory management
-    'malloc': TokenType.MALLOC,
-    'free': TokenType.FREE,
+    // Module system
+    'import': TokenType.IMPORT,
+    'from': TokenType.FROM,
+    'as': TokenType.AS,
 };
 
 export class GyroLexer {
@@ -117,7 +110,7 @@ export class GyroLexer {
         }
 
         this.tokens.push({
-            type: TokenType.EOF,
+            t_type: TokenType.EOF,
             line: this.line,
             column: this.column
         });
@@ -145,11 +138,10 @@ export class GyroLexer {
             case ';': this.addToken(TokenType.SEMICOLON, undefined, startCol); break;
             case ':': this.addToken(TokenType.COLON, undefined, startCol); break;
             case '?': this.addToken(TokenType.QUESTION, undefined, startCol); break;
+            case '%': this.addToken(TokenType.PERCENT, undefined, startCol); break;
 
             case '+':
-                if (this.match('+')) {
-                    this.addToken(TokenType.PLUS_PLUS, undefined, startCol);
-                } else if (this.match('=')) {
+                if (this.match('=')) {
                     this.addToken(TokenType.PLUS_EQUAL, undefined, startCol);
                 } else {
                     this.addToken(TokenType.PLUS, undefined, startCol);
@@ -157,9 +149,7 @@ export class GyroLexer {
                 break;
 
             case '-':
-                if (this.match('-')) {
-                    this.addToken(TokenType.MINUS_MINUS, undefined, startCol);
-                } else if (this.match('=')) {
+                if (this.match('=')) {
                     this.addToken(TokenType.MINUS_EQUAL, undefined, startCol);
                 } else {
                     this.addToken(TokenType.MINUS, undefined, startCol);
@@ -167,11 +157,11 @@ export class GyroLexer {
                 break;
 
             case '*':
-                this.addToken(this.match('=') ? TokenType.STAR_EQUAL : TokenType.STAR, undefined, startCol);
-                break;
-
-            case '%':
-                this.addToken(TokenType.PERCENT, undefined, startCol);
+                if (this.match('=')) {
+                    this.addToken(TokenType.STAR_EQUAL, undefined, startCol);
+                } else {
+                    this.addToken(TokenType.STAR, undefined, startCol);
+                }
                 break;
 
             case '!':
@@ -185,19 +175,25 @@ export class GyroLexer {
             case '=':
                 if (this.match('=')) {
                     this.addToken(TokenType.EQUAL_EQUAL, undefined, startCol);
-                } else if (this.match('>')) {
-                    this.addToken(TokenType.ARROW, undefined, startCol);
                 } else {
                     this.addToken(TokenType.EQUAL, undefined, startCol);
                 }
                 break;
 
             case '<':
-                this.addToken(this.match('=') ? TokenType.LESS_EQUAL : TokenType.LESS, undefined, startCol);
+                if (this.match('=')) {
+                    this.addToken(TokenType.LESS_EQUAL, undefined, startCol);
+                } else {
+                    this.addToken(TokenType.LESS, undefined, startCol);
+                }
                 break;
 
             case '>':
-                this.addToken(this.match('=') ? TokenType.GREATER_EQUAL : TokenType.GREATER, undefined, startCol);
+                if (this.match('=')) {
+                    this.addToken(TokenType.GREATER_EQUAL, undefined, startCol);
+                } else {
+                    this.addToken(TokenType.GREATER, undefined, startCol);
+                }
                 break;
 
             case '&':
@@ -345,8 +341,8 @@ export class GyroLexer {
         }
 
         const text = this.source.substring(this.start, this.current);
-        const type = keywords[text] || TokenType.IDENTIFIER;
-        this.addToken(type, text, startCol);
+        const t_type = keywords[text] || TokenType.IDENTIFIER;
+        this.addToken(t_type, text, startCol);
     }
 
     private blockComment(): void {
@@ -387,16 +383,14 @@ export class GyroLexer {
         return this.isAlpha(c) || this.isDigit(c);
     }
 
-    private addToken(type: TokenType, value?: any, startCol?: number): void {
+    private addToken(t_type: TokenType, value?: any, startCol?: number): void {
         const actualStartCol = startCol !== undefined ? startCol : this.column;
-        const length = this.current - this.start;
         
         this.tokens.push({
-            type,
+            t_type,
             value,
             line: this.line,
             column: actualStartCol,
-            length
         });
     }
 

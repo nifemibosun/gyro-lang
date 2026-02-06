@@ -1,0 +1,26 @@
+// Function to check if a number is perfect
+
+fun isPerfect(num: int): bool {
+    let sum: int = 0;
+    let i: int = 1;
+    
+    while (i < num) {
+        if (num % i == 0) {
+            sum = sum + i;
+        }
+        i = i + 1;
+    }
+    
+    if (sum == num) {
+        return true;
+    }
+    return false;
+}
+
+
+fun main(): void {
+    let isPerfect6: bool = isPerfect(6);
+    let isPerfect28: bool = isPerfect(28);
+    println("6 is perfect: " + isPerfect6);
+    println("28 is perfect: " + isPerfect28);
+}

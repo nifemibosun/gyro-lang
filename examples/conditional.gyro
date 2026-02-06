@@ -11,9 +11,13 @@ fun is_greater(a: int, b: int): int {
 }
 
 fun for_loop(n: int): void {
-    for (let i = 0; i < n; i = i + 1) {
+    let i: int = 0;
+
+    while (i <= 10) {
         println(i);
+        i = i + 1;
     }
+    
     println("Loop finished.");
 }
 

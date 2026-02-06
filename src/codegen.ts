@@ -1,25 +1,25 @@
 import { tokenize } from './lexer.js';
 import { parse } from './parser.js'
-
 import { OpCode } from './opcodes.js';
 import { TokenType } from './lexer.js';
 import { TypeInferenceEngine } from './type_inference.js';
-import {
+import type {
     Program, Statement, Expression, ThrowStatement, TryStatement,
     VariableDeclaration, FunctionDeclaration, ClassDeclaration,
     BlockStatement, IfStatement, WhileStatement, ReturnStatement,
     BinaryExpression, UnaryExpression, CallExpression, MemberExpression,
     LiteralExpression, IdentifierExpression, ArrayExpression, ForStatement,
     ObjectLiteralExpression, ExpressionStatement, AssignmentExpression,
-} from './ast.js';
+} from './ast.ts';
+
 
 export interface CompilationResult {
+    metadata?: any;
     bytecode: number[];
     constantPool: any[];
     classes?: any[];
     functions?: any[];
     exceptionHandlers?: any[];
-    metadata?: any;
 }
 
 interface CompilerContext {
@@ -46,12 +46,10 @@ interface CompilerContext {
 export class GyroCodeGenerator {
     private ctx: CompilerContext;
     private typeInference: TypeInferenceEngine;
-    private builtInFunctions = new Set(['println', 'input', 'malloc', 'free']);
+    private builtInFunctions = new Set(['println', 'input']);
     private builtInArgCounts: Map<string, number> = new Map([
         ['println', 1],
         ['input', 0],
-        ['malloc', 1],
-        ['free', 1],
     ]);
 
     constructor() {
@@ -75,23 +73,24 @@ export class GyroCodeGenerator {
     compile(ast: Program): CompilationResult {
         this.collectDeclarations(ast);
         this.validateTypes(ast);
-
         this.generateProgram(ast);
 
         return {
+            metadata: {
+                version: '0.2.0',
+                target: 'gyro-vm',
+                createdBy: 'gyro-compiler',
+                timestamp: new Date().toISOString(),
+            },
             bytecode: this.ctx.bytecode,
             constantPool: this.ctx.constantPool,
             classes: Array.from(this.ctx.classes.values()),
             functions: Array.from(this.ctx.functions.values()),
             exceptionHandlers: this.ctx.exceptionHandlers,
-            metadata: {
-                version: '0.2.0',
-                target: 'gyro-vm',
-            }
         };
     }
 
-    public validateTypes(ast: Program): void {
+    private validateTypes(ast: Program): void {
         for (const stmt of ast.body) {
             this.validateStatementTypes(stmt);
         }
@@ -301,33 +300,21 @@ export class GyroCodeGenerator {
 
     private generateProgram(ast: Program): void {
         const mainFuncDef = this.ctx.functions.get('main');
+
         if (!mainFuncDef) {
             throw new Error("Compilation Error: 'main' function is required as the program entry point.");
         }
         
-        if (mainFuncDef.parameters.length > 1) {
-            throw new Error("Compilation Error: The 'main' function cannot accept any arguments.");
-        }
-
-        if (mainFuncDef.parameters.length === 1) {
-            const param = mainFuncDef.parameters[0];
-            if (param.type !== "string[]") {
-                throw new Error("Compilation Error: The 'main' parameter must be of type 'string[]'");
-            }
+        if (mainFuncDef.parameters.length > 0) {
+            throw new Error("Compilation Error: The 'main' function cannot accept arguments.");
         }
 
         this.emit(OpCode.CALL);
         const mainCallAddressOffset = this.ctx.bytecode.length;
-
-        if (mainFuncDef.parameters.length === 1) {
-            this.emit(OpCode.LOAD_ARGS);
-            this.emit(1);
-        } else {
-            this.emit(0xFFFF);
-            this.emit(0);
-        }
-        
-        this.emit(OpCode.HALT);
+        this.emit(0xFF);
+        this.emit(0xFF);
+        this.emit(0);
+        this.emit(OpCode.EXIT);
 
         for (const stmt of ast.body) {
             if (stmt.type === 'FunctionDeclaration' || stmt.type === 'ClassDeclaration') {
@@ -342,7 +329,7 @@ export class GyroCodeGenerator {
                 case 'VariableDeclaration':
                     break;
                 default:
-                    throw new Error(`Unexpected top-level statement of type '${stmt.type}'. All executable code must be inside a function.`);
+                    throw new Error(`Unexpected top-level statement of type '${stmt.type}'`);
             }
         }
 
@@ -351,11 +338,17 @@ export class GyroCodeGenerator {
             throw new Error("Internal Compiler Error: Could not resolve 'main' function address after compilation.");
         }
         
-        this.ctx.bytecode[mainCallAddressOffset] = finalMainAddress;
+        const highByte = (finalMainAddress >> 8) & 0xFF;
+        const lowByte = finalMainAddress & 0xFF;
+        this.ctx.bytecode[mainCallAddressOffset] = highByte;
+        this.ctx.bytecode[mainCallAddressOffset + 1] = lowByte;
     }
 
     private generateStatement(stmt: Statement): void {
         switch (stmt.type) {
+            case 'ImportStatement':
+                this.generateImportStatement(stmt as any);
+                break;
             case 'VariableDeclaration':
                 this.generateVariableDeclaration(stmt as VariableDeclaration);
                 break;
@@ -375,7 +368,7 @@ export class GyroCodeGenerator {
                 const expr = (stmt as ExpressionStatement).expression;
                 this.generateExpression(expr);
 
-                if (expr.type !== 'AssignmentExpression' && expr.type !== 'CallExpression') {
+                if (expr.type !== 'AssignmentExpression') {
                     this.emit(OpCode.POP);
                 }
                 break;
@@ -403,6 +396,14 @@ export class GyroCodeGenerator {
             default:
                 throw new Error(`Unknown statement type: ${stmt.type}`);
         }
+    }
+
+    private generateImportStatement(node: any): void {
+        // Todo(For now, imports are handled during collection phase)
+        
+        const source = node.source;
+        const specifiers = node.specifiers;
+        
     }
 
     private generateVariableDeclaration(node: VariableDeclaration): void {
@@ -435,8 +436,6 @@ export class GyroCodeGenerator {
     }
 
     private generateFunctionDeclaration(node: FunctionDeclaration): void {
-        this.emit(OpCode.FUN);
-
         const funcDef = this.ctx.functions.get(node.name);
         if (funcDef) {
             funcDef.address = this.ctx.bytecode.length;
@@ -508,9 +507,21 @@ export class GyroCodeGenerator {
     }
 
     private generateBlockStatement(node: BlockStatement): void {
+        const savedLocals = new Map(this.ctx.locals);
+        const savedLocalCount = this.ctx.localCount;
+
         for (const stmt of node.statements) {
             this.generateStatement(stmt);
         }
+
+        const localsInScope = this.ctx.localCount - savedLocalCount;
+        if (localsInScope > 0) {
+            this.emit(OpCode.POP); 
+            this.emit(localsInScope);
+        }
+
+        this.ctx.locals = savedLocals;
+        this.ctx.localCount = savedLocalCount;
     }
 
     private generateIfStatement(node: IfStatement): void {
@@ -712,7 +723,7 @@ export class GyroCodeGenerator {
         this.generateExpression(node.left);
         this.generateExpression(node.right);
 
-        switch (node.operator.type) {
+        switch (node.operator.t_type) {
             case TokenType.PLUS: this.emit(OpCode.ADD); break;
             case TokenType.MINUS: this.emit(OpCode.SUB); break;
             case TokenType.STAR: this.emit(OpCode.MUL); break;
@@ -727,18 +738,18 @@ export class GyroCodeGenerator {
             case TokenType.AND_AND: this.emit(OpCode.AND); break;
             case TokenType.OR_OR: this.emit(OpCode.OR); break;
             default:
-                throw new Error(`Unknown binary operator: ${node.operator.type}`);
+                throw new Error(`Unknown binary operator: ${node.operator.t_type}`);
         }
     }
 
     private generateUnaryExpression(node: UnaryExpression): void {
         this.generateExpression(node.operand);
 
-        switch (node.operator.type) {
+        switch (node.operator.t_type) {
             case TokenType.MINUS: this.emit(OpCode.NEG); break;
             case TokenType.BANG: this.emit(OpCode.NOT); break;
             default:
-                throw new Error(`Unknown unary operator: ${node.operator.type}`);
+                throw new Error(`Unknown unary operator: ${node.operator.t_type}`);
         }
     }
 
@@ -757,7 +768,10 @@ export class GyroCodeGenerator {
 
                 if (funcDef) {
                     this.emit(OpCode.CALL);
-                    this.emit(funcDef.address);
+                    const highByte = (funcDef.address >> 8) & 0xFF;
+                    const lowByte = funcDef.address & 0xFF;
+                    this.emit(highByte);
+                    this.emit(lowByte);
                     this.emit(node.arguments.length);
                 } else {
                     throw new Error(`Unknown static method: ${className}.${methodName}`);
@@ -815,7 +829,10 @@ export class GyroCodeGenerator {
                     }
                 } else {
                     this.emit(OpCode.CALL);
-                    this.emit(funcDef.address);
+                    const highByte = (funcDef!.address >> 8) & 0xFF;
+                    const lowByte = funcDef!.address & 0xFF;
+                    this.emit(highByte);
+                    this.emit(lowByte);
                     this.emit(node.arguments.length);
                 }
             } else {
@@ -943,6 +960,7 @@ export class GyroCodeGenerator {
             }
         }
     }
+    
     private emit(opcode: OpCode | number): void {
         this.ctx.bytecode.push(opcode);
     }
@@ -961,18 +979,28 @@ export class GyroCodeGenerator {
 
     private emitJump(op: OpCode): number {
         this.emit(op);
+        const addressIndex = this.ctx.bytecode.length;
         this.emit(0xFF);
-        return this.ctx.bytecode.length - 1;
+        this.emit(0xFF);
+        return addressIndex;
     }
 
     private patchJump(address: number): void {
-        const jump = this.ctx.bytecode.length;
-        this.ctx.bytecode[address] = jump;
+        const jumpTarget = this.ctx.bytecode.length;
+
+        const highByte = (jumpTarget >> 8) & 0xFF;
+        const lowByte = jumpTarget & 0xFF;
+
+        this.ctx.bytecode[address] = highByte;
+        this.ctx.bytecode[address + 1] = lowByte;
     }
 
     private emitLoop(loopStart: number): void {
         this.emit(OpCode.JMP);
-        this.emit(loopStart);
+        const highByte = (loopStart >> 8) & 0xFF;
+        const lowByte = loopStart & 0xFF;
+        this.emit(highByte);
+        this.emit(lowByte);
     }
 }
 
@@ -982,6 +1010,7 @@ export function compile(source: string): CompilationResult {
         const ast = parse(tokens);
         const codegen = new GyroCodeGenerator();
 
+        // return tokens;
         return codegen.compile(ast);
     } catch (error) {
         throw new Error(`Compilation failed: ${(error as Error).message}`);

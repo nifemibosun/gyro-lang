@@ -1,4 +1,5 @@
 // This is a simple program in gyro
+
 fun main(): void {
-    println("Hello, Gyro Hacker");
+    println("Hello, World);
 }

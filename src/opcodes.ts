@@ -29,7 +29,7 @@ export enum OpCode {
     JNZ  = 0x32,
     CALL = 0x33,
     RET  = 0x34,
-    FUN  = 0x35,
+    // FUN  = 0x35,
     AND = 0x36,
     OR  = 0x37,
 
@@ -41,7 +41,6 @@ export enum OpCode {
 
     PRINT_LN = 0x50,
     INPUT = 0x51,
-    EXIT  = 0x52,
 
     ARRAY_CREATE = 0x60,
     ARRAY_GET    = 0x61,
@@ -84,7 +83,7 @@ export enum OpCode {
     THROW = 0xB3,
     FINALLY = 0xB4,
 
-    HALT = 0xF0,
+    EXIT  = 0xF0,
 }
 
 
@@ -119,7 +118,7 @@ export const OpcodeName: Record<number, string> = {
     [OpCode.JNZ]: "JNZ",
     [OpCode.CALL]: "CALL",
     [OpCode.RET]: "RET",
-    [OpCode.FUN]: "FUN",
+    // [OpCode.FUN]: "FUN",
     [OpCode.AND]: "AND",
     [OpCode.OR]: "OR",
 
@@ -131,7 +130,6 @@ export const OpcodeName: Record<number, string> = {
 
     [OpCode.PRINT_LN]: "PRINT_LN",
     [OpCode.INPUT]: "INPUT",
-    [OpCode.EXIT]: "EXIT",
 
     [OpCode.ARRAY_CREATE]: "ARRAY_CREATE",
     [OpCode.ARRAY_GET]: "ARRAY_GET",
@@ -174,5 +172,5 @@ export const OpcodeName: Record<number, string> = {
     [OpCode.THROW]: "THROW",
     [OpCode.FINALLY]: "FINALLY",
 
-    [OpCode.HALT]: "HALT",
+    [OpCode.EXIT]: "EXIT",
 };

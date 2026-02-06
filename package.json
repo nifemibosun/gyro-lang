@@ -1,23 +1,28 @@
 {
-  "name": "gyro",
-  "version": "0.2.0",
-  "description": "A tiny language written in typescript",
-  "homepage": "https://github.com/nifemibosun/gyro-lang#readme",
-  "bugs": {
-    "url": "https://github.com/nifemibosun/gyro-lang/issues"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/nifemibosun/gyro-lang.git"
-  },
-  "license": "MIT",
-  "author": "nifemibosun <nifemibosun70@gmail.com>",
-  "type": "module",
-  "main": "index.js",
-  "bin": {
-    "gyro": "./dist/cli.js"
-  },
-  "scripts": {
-    "build": "tsc && npm link"
-  }
+    "name": "gyro",
+    "version": "0.2.0",
+    "description": "A tiny language written in typescript",
+    "homepage": "https://github.com/nifemibosun/gyro-lang#readme",
+    "bugs": {
+        "url": "https://github.com/nifemibosun/gyro-lang/issues"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/nifemibosun/gyro-lang.git"
+    },
+    "license": "MIT",
+    "author": "nifemibosun <nifemibosun70@gmail.com>",
+    "type": "module",
+    "main": "index.js",
+    "scripts": {
+        "test": "tsc && node ./dist/test.js",
+        "build": "tsc && npm link"
+    },
+    "bin": {
+        "gyro": "./dist/cli.js"
+    },
+    "devDependencies": {
+        "@types/node": "^24.7.2",
+        "typescript": "^5.9.3"
+    }
 }

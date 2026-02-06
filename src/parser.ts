@@ -1,12 +1,14 @@
-import { Token, TokenType, GyroLexer } from './lexer.js';
-import { 
+import { type Token, TokenType } from './lexer.js';
+import { ASTFactory } from './ast.js';
+import type { 
     Program, Statement, Expression, VariableDeclaration,
     FunctionDeclaration, ClassDeclaration, BlockStatement,
     IfStatement, WhileStatement, ReturnStatement, CallExpression,
     ArrayExpression, ObjectLiteralExpression, TypeAnnotation,
     Parameter, FieldDeclaration, ObjectField, TryStatement,
     CatchClause, ThrowStatement, ExpressionStatement, ForStatement,
-    BreakStatement, ContinueStatement, ASTFactory, AssignmentExpression,
+    BreakStatement, ContinueStatement, AssignmentExpression,
+    ImportStatement, ImportSpecifier,
 } from './ast.js';
 
 export class GyroParser {
@@ -33,8 +35,9 @@ export class GyroParser {
         return ASTFactory.program(statements);
     }
 
-    private declaration(): Statement | null {
+    private declaration(): Statement {
         try {
+            if (this.match(TokenType.IMPORT)) return this.importStatement();
             if (this.match(TokenType.CLASS)) return this.classDeclaration();
             if (this.match(TokenType.FUN)) return this.functionDeclaration();
             if (this.match(TokenType.LET, TokenType.CONST)) return this.variableDeclaration();
@@ -43,17 +46,58 @@ export class GyroParser {
             return this.statement();
         } catch (error) {
             this.synchronize();
-            throw error;
+            throw (error as Error);
         }
+    }
+
+    private importStatement(): ImportStatement {
+        const specifiers: ImportSpecifier[] = [];
+
+        if (this.match(TokenType.LEFT_BRACE)) {
+            // Named imports: import { foo, bar as baz } from "./module"
+            if (!this.check(TokenType.RIGHT_BRACE)) {
+                do {
+                    const imported = this.consume(TokenType.IDENTIFIER, "Expected import name").value;
+                    let local = imported;
+                    
+                    if (this.match(TokenType.AS)) {
+                        local = this.consume(TokenType.IDENTIFIER, "Expected alias name").value;
+                    }
+                    
+                    specifiers.push({
+                        type: 'ImportSpecifier',
+                        imported,
+                        local,
+                        isNamespace: false
+                    });
+                } while (this.match(TokenType.COMMA));
+            }
+            this.consume(TokenType.RIGHT_BRACE, "Expected '}' after import specifiers");
+        } else if (this.match(TokenType.STAR)) {
+            // Namespace import: import * as math from "./module"
+            this.consume(TokenType.AS, "Expected 'as' after import *");
+            const name = this.consume(TokenType.IDENTIFIER, "Expected namespace name").value;
+            specifiers.push({
+                type: 'ImportSpecifier',
+                imported: '*',
+                local: name,
+                isNamespace: true
+            });
+        }
+
+        this.consume(TokenType.FROM, "Expected 'from' in import statement");
+        const source = this.consume(TokenType.STRING, "Expected module path").value;
+        this.consume(TokenType.SEMICOLON, "Expected ';' after import statement");
+
+        return {
+            type: 'ImportStatement',
+            specifiers,
+            source
+        };
     }
 
     private classDeclaration(): ClassDeclaration {
         const name = this.consume(TokenType.IDENTIFIER, "Expected class name").value;
-        
-        let superClass: string | undefined;
-        if (this.match(TokenType.EXTENDS)) {
-            superClass = this.consume(TokenType.IDENTIFIER, "Expected superclass name").value;
-        }
 
         this.consume(TokenType.LEFT_BRACE, "Expected '{' before class body");
 
@@ -81,7 +125,7 @@ export class GyroParser {
         }
 
         this.consume(TokenType.RIGHT_BRACE, "Expected '}' after class body");
-        return ASTFactory.classDecl(name, fields, methods, superClass);
+        return ASTFactory.classDecl(name, fields, methods);
     }
 
     private functionDeclaration(): FunctionDeclaration {
@@ -117,7 +161,7 @@ export class GyroParser {
     }
 
     private variableDeclaration(): VariableDeclaration {
-        const isConstant = this.previous().type === TokenType.CONST;
+        const isConstant = this.previous().t_type === TokenType.CONST;
         const name = this.consume(TokenType.IDENTIFIER, "Expected variable name").value;
 
         let typeAnnotation: TypeAnnotation | undefined;
@@ -129,9 +173,9 @@ export class GyroParser {
         let initializer: Expression | undefined;
         if (this.match(TokenType.EQUAL)) {
             initializer = this.expression();
-        } else if (isConstant) {
+        } else if (isConstant && !initializer) {
             throw this.error(this.peek(), "Constant variables must be initialized");
-        } else if (!typeAnnotation) {
+        } else if (!typeAnnotation && !initializer) {
             throw this.error(this.peek(), "Variable must have type annotation or initializer for type inference");
         }
 
@@ -378,7 +422,7 @@ export class GyroParser {
     }
 
     private unary(): Expression {
-        if (this.match(TokenType.BANG, TokenType.MINUS, TokenType.PLUS_PLUS, TokenType.MINUS_MINUS)) {
+        if (this.match(TokenType.BANG, TokenType.MINUS)) {
             const operator = this.previous();
             const right = this.unary();
             return ASTFactory.unary(operator, right);
@@ -511,9 +555,9 @@ export class GyroParser {
         return false;
     }
 
-    private check(type: TokenType): boolean {
+    private check(t_type: TokenType): boolean {
         if (this.isAtEnd()) return false;
-        return this.peek().type === type;
+        return this.peek().t_type === t_type;
     }
 
     private advance(): Token {
@@ -522,7 +566,7 @@ export class GyroParser {
     }
 
     private isAtEnd(): boolean {
-        return this.peek().type === TokenType.EOF;
+        return this.peek().t_type === TokenType.EOF;
     }
 
     private peek(): Token {
@@ -533,8 +577,8 @@ export class GyroParser {
         return this.tokens[this.current - 1];
     }
 
-    private consume(type: TokenType, message: string): Token {
-        if (this.check(type)) return this.advance();
+    private consume(t_type: TokenType, message: string): Token {
+        if (this.check(t_type)) return this.advance();
         throw this.error(this.peek(), message);
     }
 
@@ -547,9 +591,9 @@ export class GyroParser {
         this.advance();
 
         while (!this.isAtEnd()) {
-            if (this.previous().type === TokenType.SEMICOLON) return;
+            if (this.previous().t_type === TokenType.SEMICOLON) return;
 
-            switch (this.peek().type) {
+            switch (this.peek().t_type) {
                 case TokenType.CLASS:
                 case TokenType.FUN:
                 case TokenType.LET:
@@ -568,13 +612,6 @@ export class GyroParser {
 }
 
 export function parse(tokens: Token[]): Program {
-    const parser = new GyroParser(tokens);
-    return parser.parse();
-}
-
-export function parseSource(source: string): Program {
-    const lexer = new GyroLexer(source);
-    const tokens = lexer.tokenize();
     const parser = new GyroParser(tokens);
     return parser.parse();
 }
