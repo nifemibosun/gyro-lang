@@ -10,7 +10,7 @@
 
 pub mod token;
 
-use super::State;
+use crate::gyro::State;
 
 #[derive(Debug, PartialEq)]
 pub struct Scanner<'a> {
