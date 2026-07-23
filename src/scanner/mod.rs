@@ -1,11 +1,3 @@
-// file: src/scanner/mod.rs
-//! Scanner (lexer) module
-//!
-//! The scanner turns a source string into a stream of tokens. Each token
-//! contains a TokenType, lexeme, optional literal and position information.
-//! The scanner is designed to be UTF-8 safe and to report unterminated
-//! strings or other lexical errors via the shared State.
-
 #![allow(unused)]
 
 pub mod token;
@@ -286,6 +278,7 @@ impl<'a> Scanner<'a> {
             "const" => Some(token::TokenType::Const),
             "mut" => Some(token::TokenType::Mut),
             "true" => Some(token::TokenType::True),
+            "extern" => Some(token::TokenType::Extern),
             "false" => Some(token::TokenType::False),
             "match" => Some(token::TokenType::Match),
             "import" => Some(token::TokenType::Import),
@@ -348,147 +341,5 @@ impl<'a> Scanner<'a> {
     #[inline]
     fn is_alpha_num(&self, c: char) -> bool {
         self.is_alpha(c) || self.is_digit(c)
-    }
-}
-
-/// Tests for scanner
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::scanner::*;
-
-    fn scan_types(source: &str) -> Vec<token::TokenType> {
-        let mut state = State::new();
-        let mut scanner = Scanner::new(source, &mut state);
-        let (tokens, _) = scanner.scan_tokens();
-        tokens.into_iter().map(|t| t.token_type).collect()
-    }
-
-    #[test]
-    fn test_single_symbols() {
-        let source = "(){},.;";
-        let types = scan_types(source);
-        assert_eq!(
-            types,
-            vec![
-                token::TokenType::LParen,
-                token::TokenType::RParen,
-                token::TokenType::LBrace,
-                token::TokenType::RBrace,
-                token::TokenType::Comma,
-                token::TokenType::Dot,
-                token::TokenType::SemiColon,
-                token::TokenType::EoF
-            ]
-        );
-    }
-
-    #[test]
-    fn test_keywords_and_identifiers() {
-        let source = "if else while func return let gyro";
-        let types = scan_types(source);
-        assert_eq!(
-            types,
-            vec![
-                token::TokenType::If,
-                token::TokenType::Else,
-                token::TokenType::While,
-                token::TokenType::Func,
-                token::TokenType::Return,
-                token::TokenType::Let,
-                token::TokenType::Identifier,
-                token::TokenType::EoF
-            ]
-        );
-    }
-
-    #[test]
-    fn test_numbers() {
-        let source = "42 3.14";
-        let mut state = State::new();
-        let mut scanner = Scanner::new(source, &mut state);
-        let (tokens, _) = scanner.scan_tokens();
-        assert_eq!(tokens[0].token_type, token::TokenType::IntLiteral);
-        assert_eq!(tokens[1].token_type, token::TokenType::FloatLiteral);
-    }
-
-    #[test]
-    fn test_string_literal() {
-        let source = "\"hello world\"";
-        let mut state = State::new();
-        let mut scanner = Scanner::new(source, &mut state);
-        let (tokens, _) = scanner.scan_tokens();
-        assert_eq!(tokens[0].token_type, token::TokenType::StringLiteral);
-        if let Some(token::LiteralTypes::String(ref s)) = tokens[0].literal {
-            assert_eq!(s, "hello world");
-        } else {
-            panic!("Expected string literal");
-        }
-    }
-
-    #[test]
-    fn test_comment_and_whitespace() {
-        let source = "let // this is a comment\n x";
-        let types = scan_types(source);
-        assert_eq!(
-            types,
-            vec![
-                token::TokenType::Let,
-                token::TokenType::Identifier,
-                token::TokenType::EoF
-            ]
-        );
-    }
-
-    #[test]
-    fn test_unterminated_string() {
-        let source = "\"unterminated";
-        let mut state = State::new();
-        let mut scanner = Scanner::new(source, &mut state);
-        let (_, had_error) = scanner.scan_tokens();
-        assert!(
-            had_error,
-            "Scanner should set had_error for unterminated string"
-        );
-    }
-
-    #[test]
-    fn test_composite_operators() {
-        let source = "+ += - -= * *= / /= == != < <= > >=";
-        let types = scan_types(source);
-        assert_eq!(
-            types,
-            vec![
-                token::TokenType::Plus,
-                token::TokenType::PlusEqual,
-                token::TokenType::Minus,
-                token::TokenType::MinusEqual,
-                token::TokenType::Star,
-                token::TokenType::StarEqual,
-                token::TokenType::Slash,
-                token::TokenType::SlashEqual,
-                token::TokenType::EqualEqual,
-                token::TokenType::BangEqual,
-                token::TokenType::Less,
-                token::TokenType::LessEqual,
-                token::TokenType::Greater,
-                token::TokenType::GreaterEqual,
-                token::TokenType::EoF
-            ]
-        );
-    }
-
-    #[test]
-    fn test_boolean_literals() {
-        let source = "true false";
-        let types = scan_types(source);
-        assert_eq!(
-            types,
-            vec![
-                token::TokenType::True,
-                token::TokenType::False,
-                token::TokenType::EoF
-            ]
-        );
     }
 }

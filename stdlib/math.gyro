@@ -1,0 +1,67 @@
+public func abs(x: float64): float64 {
+    if x < 0.0 {
+        return -x;
+    }
+    return x;
+}
+
+public func min(a: float64, b: float64): float64 {
+    if a < b {
+        return a;
+    }
+    return b;
+}
+
+public func max(a: float64, b: float64): float64 {
+    if a > b {
+        return a;
+    }
+    return b;
+}
+
+public func pow(base: float64, exponent: int32): float64 {
+    let mut result: float64 = 1.0;
+    let mut i: int32 = 0;
+    while i < exponent {
+        result *= base;
+        i += 1;
+    }
+    return result;
+}
+
+extern func c_pow(x: float64, y: float64): float64;
+public func powf(base: float64, exponent: float64): float64 {
+    return c_pow(base, exponent);
+}
+
+public func sqrt(x: float64): float64 {
+    if x < 0.0 {
+        return -1.0;
+    }
+    let mut guess: float64 = x / 2.0;
+    if guess == 0.0 {
+        guess = 1.0;
+    }
+    let mut i: int32 = 0;
+    while i < 40 {
+        guess = (guess + x / guess) / 2.0;
+        i += 1;
+    }
+    return guess;
+}
+
+extern func c_sin(x: float64): float64;
+extern func c_cos(x: float64): float64;
+extern func c_tan(x: float64): float64;
+
+public func sin(x: float64): float64 { return c_sin(x); }
+public func cos(x: float64): float64 { return c_cos(x); }
+public func tan(x: float64): float64 { return c_tan(x); }
+
+extern func c_floor(x: float64): float64;
+extern func c_ceil(x: float64): float64;
+extern func c_round(x: float64): float64;
+
+public func floor(x: float64): float64 { return c_floor(x); }
+public func ceil(x: float64): float64 { return c_ceil(x); }
+public func round(x: float64): float64 { return c_round(x); }

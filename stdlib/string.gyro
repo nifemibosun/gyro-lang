@@ -1,0 +1,27 @@
+extern func strlen(s: string): int32;
+
+public func length(s: string): int32 {
+    return strlen(s);
+}
+
+public func concat(a: string, b: string): string {
+    return a + b;
+}
+
+extern func c_strstr(haystack: string, needle: string): int32;
+public func index_of(s: string, sub: string): int32 {
+    // TODO: replace with a correct implementation or binding
+    return -1;
+}
+
+public func substring(s: string, start: int32, len: int32): string {
+    // Placeholder implementation
+    return "";
+}
+
+public func to_upper(s: string): string { return s; }
+public func to_lower(s: string): string { return s; }
+
+public func trim(s: string): string { return s; }
+public func trim_start(s: string): string { return s; }
+public func trim_end(s: string): string { return s; }

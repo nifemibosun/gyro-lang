@@ -137,6 +137,7 @@ pub enum StmtKind {
 pub struct FuncDecl {
     pub is_public: bool,
     pub name: String,
+    pub generics: Vec<String>,
     pub params: Vec<(String, TypeExpr)>,
     pub return_type: Option<TypeExpr>,
     pub body: Vec<Stmt>,
@@ -145,7 +146,7 @@ pub struct FuncDecl {
 #[derive(Debug, PartialEq, Clone)]
 pub enum Decl {
     Import {
-        path: Vec<String>,
+        path: String,
     },
     ConstDecl {
         is_public: bool,
@@ -157,6 +158,12 @@ pub enum Decl {
         is_public: bool,
         name: String,
         r#type: TypeExpr,
+    },
+    ExternFunc {
+        is_public: bool,
+        name: String,
+        params: Vec<(String, TypeExpr)>,
+        return_type: Option<TypeExpr>,
     },
     Func(FuncDecl),
     Struct {

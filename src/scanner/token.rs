@@ -92,6 +92,7 @@ pub enum TokenType {
     If,
     Else,
     While,
+    Extern,
     Func,
     Return,
     Let,

@@ -29,6 +29,10 @@ pub enum Type {
     Bool,
     Char,
     Struct(String),
+    Array {
+        element: Box<Type>,
+        size: Option<usize>,
+    },
     Unit,
 }
 
@@ -139,6 +143,10 @@ pub enum SymbolKind {
     FuncDecl {
         params: Vec<(String, Type)>,
         return_type: Type,
+    },
+
+    Module {
+        symbols: HashMap<String, Symbol>,
     },
 }
 
@@ -290,6 +298,14 @@ impl SymbolTable {
             }
         }
         None
+    }
+
+    pub fn into_root_scope(mut self) -> HashMap<String, Symbol> {
+        if self.scopes.is_empty() {
+            HashMap::new()
+        } else {
+            self.scopes.remove(0)
+        }
     }
 
     pub fn assign(&mut self, name: &str, new_value: Value) -> Result<(), SymbolTableError> {

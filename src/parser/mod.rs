@@ -1,13 +1,3 @@
-// file: src/parser/mod.rs
-//! Parser module
-//!
-//! The parser transforms a stream of tokens (produced by the scanner) into
-//! an abstract syntax tree (AST). Public APIs:
-//! - Parser::new(tokens) -> Parser
-//! - Parser::parse() -> Result<ast::Program, String>
-//!
-//! The module exposes the AST under the `ast` submodule.
-
 #![allow(unused)]
 
 pub mod ast;
@@ -117,14 +107,14 @@ impl Parser {
             .consume(TokenType::Identifier, "Expected identifier after 'const'")?
             .lexeme;
 
-        self.consume(TokenType::Colon, "Expected ':' after const name");
+        self.consume(TokenType::Colon, "Expected ':' after const name")?;
 
         let t_type = self.parse_type()?;
 
-        self.consume(TokenType::Equal, "Expected '=' after const type");
+        self.consume(TokenType::Equal, "Expected '=' after const type")?;
         let value = self.expression()?;
 
-        self.consume(TokenType::SemiColon, "Expected ';' after const declaration");
+        self.consume(TokenType::SemiColon, "Expected ';' after const declaration")?;
 
         Ok(ast::Node::new(
             ast::StmtKind::ConstStmt {
@@ -283,7 +273,6 @@ impl Parser {
 
             self.consume(TokenType::FatArrow, "Expected '=>' after match pattern")?;
 
-            // Arm body: either a block or a single expression statement
             let body = if self.match_token(&[TokenType::LBrace]) {
                 let mut stmts = Vec::new();
 
@@ -418,7 +407,9 @@ impl Parser {
             return self.const_decl(is_public);
         } else if self.match_token(&[TokenType::Type]) {
             return self.type_decl(is_public);
-        } else if self.match_token(&[TokenType::Func]) {
+        } else if self.match_token(&[TokenType::Extern]) {
+            return self.extern_func_decl(is_public);
+        }else if self.match_token(&[TokenType::Func]) {
             return self.function_decl(is_public);
         } else if self.match_token(&[TokenType::Struct]) {
             return self.struct_decl(is_public);
@@ -437,23 +428,20 @@ impl Parser {
 
     fn import_decl(&mut self) -> Result<ast::Node<ast::Decl>, String> {
         let s_pos = self.previous().pos;
-        let mut path = Vec::new();
 
-        loop {
-            path.push(
-                self.consume(TokenType::Identifier, "Expected identifier after 'import'")?
-                    .lexeme,
-            );
-
-            if !self.match_token(&[TokenType::ColonColon]) {
-                break;
-            }
-        }
+        let token = self.consume(
+            TokenType::StringLiteral,
+            "Expected a string path after 'import'",
+        )?;
+        let path = match token.literal {
+            Some(LiteralTypes::String(s)) => s,
+            _ => token.lexeme.clone(),
+        };
 
         self.consume(
             TokenType::SemiColon,
             "Expected ';' after import declaration",
-        );
+        )?;
 
         Ok(ast::Node::new(ast::Decl::Import { path }, s_pos))
     }
@@ -464,14 +452,14 @@ impl Parser {
             .consume(TokenType::Identifier, "Expected identifier after 'const'")?
             .lexeme;
 
-        self.consume(TokenType::Colon, "Expected ':' after const name");
+        self.consume(TokenType::Colon, "Expected ':' after const name")?;
 
         let t_type = self.parse_type()?;
 
-        self.consume(TokenType::Equal, "Expected '=' after token type");
+        self.consume(TokenType::Equal, "Expected '=' after token type")?;
         let value = self.expression()?;
 
-        self.consume(TokenType::SemiColon, "Expected ';' after const declaration");
+        self.consume(TokenType::SemiColon, "Expected ';' after const declaration")?;
 
         Ok(ast::Node::new(
             ast::Decl::ConstDecl {
@@ -490,11 +478,11 @@ impl Parser {
             .consume(TokenType::Identifier, "Expected identifier after 'type'")?
             .lexeme;
 
-        self.consume(TokenType::Equal, "Expected '=' after alias name");
+        self.consume(TokenType::Equal, "Expected '=' after alias name")?;
 
         let t_type = self.parse_type()?;
 
-        self.consume(TokenType::SemiColon, "Expected ';' after const declaration");
+        self.consume(TokenType::SemiColon, "Expected ';' after const declaration")?;
 
         Ok(ast::Node::new(
             ast::Decl::Type {
@@ -506,13 +494,62 @@ impl Parser {
         ))
     }
 
+    fn extern_func_decl(&mut self, is_public: bool) -> Result<ast::Node<ast::Decl>, String> {
+        let s_pos = self.previous().pos;
+        self.consume(TokenType::Func, "Expected 'func' after 'extern'")?;
+        let name = self.consume(TokenType::Identifier, "Expected function name")?.lexeme;
+
+        self.consume(TokenType::LParen, "Expected '(' after function name")?;
+
+        let mut params = Vec::new();
+        if !self.check(TokenType::RParen) {
+            loop {
+                let p_name = self.consume(TokenType::Identifier, "Expected parameter name")?.lexeme;
+                self.consume(TokenType::Colon, "Expected ':' after parameter name")?;
+                let p_type = self.parse_type()?;
+                params.push((p_name, p_type));
+                if !self.match_token(&[TokenType::Comma]) {
+                    break;
+                }
+            }
+        }
+        self.consume(TokenType::RParen, "Expected ')' after function parameters")?;
+
+        let return_type = if self.match_token(&[TokenType::Colon]) {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+
+        self.consume(TokenType::SemiColon, "Expected ';' after extern declaration")?;
+
+        Ok(ast::Node::new(
+            ast::Decl::ExternFunc { is_public, name, params, return_type },
+            s_pos,
+        ))
+    }
+
     fn function_decl(&mut self, is_public: bool) -> Result<ast::Node<ast::Decl>, String> {
         let s_pos = self.previous().pos;
         let name = self
             .consume(TokenType::Identifier, "Expected function name")?
             .lexeme;
 
-        self.consume(TokenType::LParen, "Expected '(' after function name");
+        let mut generics = Vec::new();
+        if self.match_token(&[TokenType::Less]) {
+            loop {
+                generics.push(
+                    self.consume(TokenType::Identifier, "Expected generic parameter name")?
+                        .lexeme,
+                );
+                if !self.match_token(&[TokenType::Comma]) {
+                    break;
+                }
+            }
+            self.consume(TokenType::Greater, "Expected '>' after generic parameters")?;
+        }
+
+        self.consume(TokenType::LParen, "Expected '(' after function name")?;
 
         let mut params = Vec::new();
 
@@ -551,7 +588,7 @@ impl Parser {
                         .consume(TokenType::Identifier, "Expected parameter name")?
                         .lexeme;
 
-                    self.consume(TokenType::Colon, "Expected ':' after parameter name");
+                    self.consume(TokenType::Colon, "Expected ':' after parameter name")?;
                     let p_type = self.parse_type()?;
                     params.push((p_name, p_type));
                 }
@@ -562,7 +599,7 @@ impl Parser {
             }
         }
 
-        self.consume(TokenType::RParen, "Expected ')' after function parameters");
+        self.consume(TokenType::RParen, "Expected ')' after function parameters")?;
 
         let return_type = if self.match_token(&[TokenType::Colon]) {
             Some(self.parse_type()?)
@@ -570,7 +607,7 @@ impl Parser {
             None
         };
 
-        self.consume(TokenType::LBrace, "Expected '{' before function body");
+        self.consume(TokenType::LBrace, "Expected '{' before function body")?;
         let body_stmt = self.block_stmt()?;
 
         let body = match body_stmt.value {
@@ -581,6 +618,7 @@ impl Parser {
         let func_decl = ast::FuncDecl {
             is_public,
             name,
+            generics,
             params,
             return_type,
             body,
@@ -591,13 +629,17 @@ impl Parser {
 
     fn struct_decl(&mut self, is_public: bool) -> Result<ast::Node<ast::Decl>, String> {
         let s_pos = self.previous().pos;
-        let name = self.consume(TokenType::Identifier, "Expected struct name")?.lexeme;
+        let name = self
+            .consume(TokenType::Identifier, "Expected struct name")?
+            .lexeme;
 
         self.consume(TokenType::LBrace, "Expected '{' before struct fields")?;
 
         let mut fields = Vec::new();
         while !self.check(TokenType::RBrace) && !self.is_at_end() {
-            let f_name = self.consume(TokenType::Identifier, "Expected field name")?.lexeme;
+            let f_name = self
+                .consume(TokenType::Identifier, "Expected field name")?
+                .lexeme;
 
             self.consume(TokenType::Colon, "Expected ':' after field name")?;
 
@@ -625,13 +667,17 @@ impl Parser {
 
     fn enum_decl(&mut self, is_public: bool) -> Result<ast::Node<ast::Decl>, String> {
         let s_pos = self.previous().pos;
-        let name = self.consume(TokenType::Identifier, "Expected enum name")?.lexeme;
+        let name = self
+            .consume(TokenType::Identifier, "Expected enum name")?
+            .lexeme;
 
         self.consume(TokenType::LBrace, "Expected '{' before enum variants")?;
 
         let mut variants = Vec::new();
         while !self.check(TokenType::RBrace) && !self.is_at_end() {
-            let v_name = self.consume(TokenType::Identifier, "Expected variant name")?.lexeme;
+            let v_name = self
+                .consume(TokenType::Identifier, "Expected variant name")?
+                .lexeme;
 
             let v_type = if self.match_token(&[TokenType::LParen]) {
                 let t = self.parse_type()?;
@@ -644,7 +690,7 @@ impl Parser {
             variants.push((v_name, v_type));
 
             if !self.match_token(&[TokenType::Comma]) {
-                break;;
+                break;
             }
         }
 
@@ -662,10 +708,12 @@ impl Parser {
 
     fn construct_decl(&mut self) -> Result<ast::Node<ast::Decl>, String> {
         let s_pos = self.previous().pos;
-        let name = self.consume(
-            TokenType::Identifier,
-            "Expected type name after 'construct'",
-        )?.lexeme;
+        let name = self
+            .consume(
+                TokenType::Identifier,
+                "Expected type name after 'construct'",
+            )?
+            .lexeme;
 
         self.consume(TokenType::LBrace, "Expected '{' before construct methods")?;
 
@@ -775,26 +823,31 @@ impl Parser {
             TokenType::False => {
                 ast::Node::new(ast::ExprKind::Literal(LiteralTypes::Bool(false)), token.pos)
             }
-            TokenType::SelfLower => {
-                ast::Node::new(ast::ExprKind::SelfExpr, token.pos)
-            }
+            TokenType::SelfLower => ast::Node::new(ast::ExprKind::SelfExpr, token.pos),
             TokenType::Identifier => {
                 if self.is_struct_literal_ahead() {
                     self.advance();
                     let mut fields = Vec::new();
 
                     while !self.check(TokenType::RBrace) && !self.is_at_end() {
-                        let field_name = self.consume(TokenType::Identifier, "Expected field name")?.lexeme;
+                        let field_name = self
+                            .consume(TokenType::Identifier, "Expected field name")?
+                            .lexeme;
 
                         self.consume(TokenType::Colon, "Expected ':' after field name")?;
                         let field_val = self.expression()?;
 
                         fields.push((field_name, field_val));
-                        if !self.match_token(&[TokenType::Comma]) { break; }
+                        if !self.match_token(&[TokenType::Comma]) {
+                            break;
+                        }
                     }
                     self.consume(TokenType::RBrace, "Expected '}' after struct fields")?;
                     ast::Node::new(
-                        ast::ExprKind::StructLiteral { name: token.lexeme, fields },
+                        ast::ExprKind::StructLiteral {
+                            name: token.lexeme,
+                            fields,
+                        },
                         token.pos,
                     )
                 } else {
@@ -806,7 +859,12 @@ impl Parser {
                 self.consume(TokenType::RParen, "Expected ')' after expression")?;
                 ast::Node::new(ast::ExprKind::Grouping(Box::new(expr)), token.pos)
             }
-            _ => return Err(format!("Unexpected token {:?} at {:?}", token.token_type, token.pos)),
+            _ => {
+                return Err(format!(
+                    "Unexpected token {:?} at {:?}",
+                    token.token_type, token.pos
+                ));
+            }
         };
 
         loop {
@@ -832,7 +890,9 @@ impl Parser {
             return false;
         }
         let next = self.current + 1;
-        if next >= self.tokens.len() { return false; }
+        if next >= self.tokens.len() {
+            return false;
+        }
         match self.tokens[next].token_type {
             TokenType::RBrace => true,
             TokenType::Identifier => {
@@ -842,7 +902,6 @@ impl Parser {
             _ => false,
         }
     }
-
 
     fn parse_call(&mut self, callee: ast::Expr) -> Result<ast::Expr, String> {
         let s_pos = callee.pos;
@@ -1023,7 +1082,16 @@ impl Parser {
         false
     }
 
-    #[inline] fn peek(&self) -> Token { self.tokens[self.current].clone() }
-    #[inline] fn previous(&mut self) -> Token { self.tokens[self.current - 1].clone() }
-    #[inline] fn is_at_end(&self) -> bool { self.peek().token_type == TokenType::EoF }
+    #[inline]
+    fn peek(&self) -> Token {
+        self.tokens[self.current].clone()
+    }
+    #[inline]
+    fn previous(&mut self) -> Token {
+        self.tokens[self.current - 1].clone()
+    }
+    #[inline]
+    fn is_at_end(&self) -> bool {
+        self.peek().token_type == TokenType::EoF
+    }
 }

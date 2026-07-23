@@ -1,10 +1,13 @@
+#![allow(unused, unused_imports)]
+
 use std::env;
 use std::fs;
 use std::io::Result;
 use std::process::exit;
 
-use crate::scanner;
+use crate::codegen;
 use crate::parser;
+use crate::scanner;
 use crate::semantic;
 
 fn help_msg() {
@@ -85,7 +88,7 @@ impl State {
 
 fn run_file(state: &mut State, path: &str) -> Result<()> {
     let content = fs::read_to_string(path)?;
-    compile(state, &content);
+    compile(state, &content, path);
 
     if state.had_error {
         exit(65);
@@ -94,15 +97,26 @@ fn run_file(state: &mut State, path: &str) -> Result<()> {
     Ok(())
 }
 
-fn compile(state: &mut State, source: &str) {
+fn compile(state: &mut State, source: &str, output_path: &str) {
+    let entry_path = std::path::Path::new(output_path);
     let mut scanner = scanner::Scanner::new(source, state);
     let (tokens, _) = scanner.scan_tokens();
     let mut parser = parser::Parser::new(tokens);
     let ast = parser.parse().expect("syntax error ");
-    let mut semantic_analyzer = semantic::SemanticAnalyzer::new(&ast);
-    let symbo_table = semantic_analyzer.analyze_program();
+    let mut analyzer = semantic::SemanticAnalyzer::new(&ast)
+        .with_base_dir(entry_path.parent().unwrap().to_path_buf())
+        .with_import_chain(vec![
+            entry_path
+                .canonicalize()
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
+        ]);
+        
+    analyzer.analyze_program();
+    let imported_modules = analyzer.imported_modules;
 
-    println!("{:#?}", &symbo_table);
+    codegen::compile(&ast, &imported_modules, output_path);
 }
 
 pub fn run() {

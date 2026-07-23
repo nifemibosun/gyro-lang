@@ -1,0 +1,22 @@
+extern func puts(s: string): int32;
+
+public func println(s: string) {
+    puts(s);
+}
+
+public func print(s: string) {
+    puts(s);
+}
+
+extern func atoi(s: string): int32;
+extern func atof(s: string): float64;
+
+public func parse_int(s: string): int32 {
+    return atoi(s);
+}
+
+public func parse_float(s: string): float64 {
+    return atof(s);
+}
+
+// TODO: implement read_line/read_int/read_float that read from stdin.

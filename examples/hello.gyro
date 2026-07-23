@@ -1,12 +1,5 @@
-// import std::io;
-
-func ret_str(s: string): string {
-    return s;
-}
+import "std/io";
 
 func main() {
-    let s: string = "Hello, Gyro\n";
-    // println("{}", s);
-
-    ret_str(s);
+    io.println("Hello, World");
 }

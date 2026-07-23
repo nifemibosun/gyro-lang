@@ -1,0 +1,26 @@
+public struct VecString {
+    pub data: []string;
+}
+
+public func vec_string_new(): VecString {
+    let v: VecString = VecString { data: [] };
+    return v;
+}
+
+public func vec_string_push(v: &mut VecString, val: string) {
+    v.data.push(val);
+}
+
+public func vec_string_pop(v: &mut VecString): string {
+    return v.data.pop();
+}
+
+public func vec_string_get(v: VecString, idx: int32): string {
+    return v.data[idx];
+}
+
+public func vec_string_len(v: VecString): int32 {
+    return v.data.len();
+}
+
+// TODO: Add generic like rust (i.e Vec<T>)
