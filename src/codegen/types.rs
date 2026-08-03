@@ -1,4 +1,5 @@
-use inkwell::types::{ BasicTypeEnum, BasicType};
+use inkwell::types::{ BasicTypeEnum, BasicType };
+use inkwell::values::BasicValueEnum;
 
 use crate::semantic::symbol_table::Type;
 
@@ -46,6 +47,36 @@ impl<'ctx> Codegen<'ctx> {
             Type::Unit => panic!(
                 "Unit/void has no BasicTypeEnum — handle void return separately in decl.rs"
             ),
+        }
+    }
+
+    pub fn coerce_to(&self, val: BasicValueEnum<'ctx>, target_ty: BasicTypeEnum<'ctx>) -> BasicValueEnum<'ctx> {
+        if val.get_type() == target_ty {
+            return val;
+        }
+        match (val, target_ty) {
+            (BasicValueEnum::IntValue(iv), BasicTypeEnum::IntType(it)) => {
+                let src_bits = iv.get_type().get_bit_width();
+                let dst_bits = it.get_bit_width();
+                if dst_bits > src_bits {
+                    self.builder.build_int_s_extend(iv, it, "sext").unwrap().into()
+                } else if dst_bits < src_bits {
+                    self.builder.build_int_truncate(iv, it, "trunc").unwrap().into()
+                } else {
+                    iv.into()
+                }
+            }
+            (BasicValueEnum::IntValue(iv), BasicTypeEnum::FloatType(ft)) => {
+                self.builder.build_signed_int_to_float(iv, ft, "sitofp").unwrap().into()
+            }
+            (BasicValueEnum::FloatValue(fv), BasicTypeEnum::FloatType(ft)) => {
+                if ft == self.context.f64_type() {
+                    self.builder.build_float_ext(fv, ft, "fpext").unwrap().into()
+                } else {
+                    self.builder.build_float_trunc(fv, ft, "fptrunc").unwrap().into()
+                }
+            }
+            _ => val,
         }
     }
 }

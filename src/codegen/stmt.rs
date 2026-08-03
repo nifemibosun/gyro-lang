@@ -59,12 +59,15 @@ impl<'ctx> Codegen<'ctx> {
     fn emit_return(&mut self, expr: Option<&ast::Expr>) {
         match expr {
             Some(e) => {
-                let val = self.emit_expr(e);
+                let mut val = self.emit_expr(e);
+                if let Some(func) = self.builder.get_insert_block().and_then(|b| b.get_parent()) {
+                    if let Some(ret_ty) = func.get_type().get_return_type() {
+                        val = self.coerce_to(val, ret_ty);
+                    }
+                }
                 self.builder.build_return(Some(&val)).unwrap();
             }
-            None => {
-                self.builder.build_return(None).unwrap();
-            }
+            None => { self.builder.build_return(None).unwrap(); }
         }
     }
 
@@ -88,6 +91,7 @@ impl<'ctx> Codegen<'ctx> {
 
         if let Some(init_expr) = init {
             let val = self.emit_expr(init_expr);
+            let val = self.coerce_to(val, llvm_type);
             self.builder.build_store(slot, val).unwrap();
         }
     }
@@ -103,7 +107,8 @@ impl<'ctx> Codegen<'ctx> {
 
         let val = self.emit_expr(value);
 
-        if let Some(&(slot, _)) = self.locals.get(name) {
+        if let Some(&(slot, ty)) = self.locals.get(name) {
+            let val = self.coerce_to(val, ty);
             self.builder.build_store(slot, val).unwrap();
         } else {
             eprintln!("Error: assignment to undefined variable '{}'", name);

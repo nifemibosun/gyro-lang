@@ -100,49 +100,62 @@ pub fn compile(program: &ast::Program, imported_modules: &HashMap<String, ast::P
         .write_to_memory_buffer(&codegen.module, FileType::Object)
         .expect("Failed to write object buffer");
 
-    if std::process::Command::new("clang")
-        .arg("--version")
-        .output()
-        .is_err()
-    {
+    if std::process::Command::new("clang").arg("--version").output().is_err() {
         eprintln!("Linker 'clang' not found on PATH");
         std::process::exit(1);
     }
-
-    let exe_path = out_path.strip_suffix(".gyro").unwrap_or(out_path);
-
-    let obj_path = std::env::temp_dir().join("gyro_temp.o");
-    std::fs::write(&obj_path, buffer.as_slice()).expect("Failed to write object temp");
-
-    let combined_source = format!("{}\n{}", RUNTIME_RS_SRC, ENTRY_RS_SRC);
-    let runtime_rs_path = std::env::temp_dir().join("gyro_runtime.rs");
-    std::fs::write(&runtime_rs_path, &combined_source).expect("Failed to write runtime source temp");
-
     if std::process::Command::new("rustc").arg("--version").output().is_err() {
         eprintln!("'rustc' not found on PATH — needed to build and link the Gyro program");
         std::process::exit(1);
     }
-    
+
+    let build_dir = std::env::temp_dir().join(format!("gyro_build_{}", std::process::id()));
+    std::fs::create_dir_all(&build_dir).expect("Failed to create temp build directory");
+
+    let obj_path = build_dir.join("gyro_temp.o");
+    std::fs::write(&obj_path, buffer.as_slice()).expect("Failed to write object temp");
+
+    let combined_source = format!("{}\n{}", RUNTIME_RS_SRC, ENTRY_RS_SRC);
+    let runtime_rs_path = build_dir.join("gyro_runtime.rs");
+    std::fs::write(&runtime_rs_path, &combined_source).expect("Failed to write runtime source temp");
+
+    let temp_exe_path = build_dir.join(format!("gyro_out{}", std::env::consts::EXE_SUFFIX));
     let link_arg = format!("-Clink-arg={}", obj_path.display());
 
     let status = std::process::Command::new("rustc")
         .arg("--edition").arg("2024")
         .arg("--crate-type").arg("bin")
         .arg("-O")
+        .arg("-Cdebuginfo=0")       // no separate .pdb / debug object emitted
         .arg(&link_arg)
         .arg(&runtime_rs_path)
-        .arg("-o").arg(exe_path)
+        .arg("-o").arg(&temp_exe_path)
         .status()
         .expect("Failed to run rustc");
 
-    std::fs::remove_file(&obj_path).ok();
-    std::fs::remove_file(&runtime_rs_path).ok();
-
     if !status.success() {
+        let _ = std::fs::remove_dir_all(&build_dir);
         eprintln!("Compilation/linking failed");
         std::io::stdout().flush().unwrap();
         std::process::exit(1);
     }
+
+    let exe_stem = out_path.strip_suffix(".gyro").unwrap_or(out_path);
+    let final_exe_path = format!("{}{}", exe_stem, std::env::consts::EXE_SUFFIX);
+
+    std::fs::copy(&temp_exe_path, &final_exe_path).expect("Failed to write final executable");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(metadata) = std::fs::metadata(&final_exe_path) {
+            let mut perms = metadata.permissions();
+            perms.set_mode(perms.mode() | 0o111);
+            let _ = std::fs::set_permissions(&final_exe_path, perms);
+        }
+    }
+
+    let _ = std::fs::remove_dir_all(&build_dir);
 
     std::io::stdout().flush().unwrap();
     std::process::exit(0);

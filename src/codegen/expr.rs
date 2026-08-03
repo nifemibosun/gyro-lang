@@ -1,3 +1,4 @@
+use inkwell::types::BasicTypeEnum;
 use inkwell::values::BasicValueEnum;
 use inkwell::IntPredicate;
 use inkwell::FloatPredicate;
@@ -76,6 +77,36 @@ impl<'ctx> Codegen<'ctx> {
         }
     }
 
+    fn unify_binary_operands(
+        &self,
+        lhs: BasicValueEnum<'ctx>,
+        rhs: BasicValueEnum<'ctx>,
+    ) -> (BasicValueEnum<'ctx>, BasicValueEnum<'ctx>) {
+        if lhs.get_type() == rhs.get_type() {
+            return (lhs, rhs);
+        }
+        match (lhs, rhs) {
+            (BasicValueEnum::IntValue(l), BasicValueEnum::IntValue(r)) => {
+                if l.get_type().get_bit_width() >= r.get_type().get_bit_width() {
+                    (lhs, self.coerce_to(rhs, l.get_type().into()))
+                } else {
+                    (self.coerce_to(lhs, r.get_type().into()), rhs)
+                }
+            }
+            (BasicValueEnum::FloatValue(_), BasicValueEnum::FloatValue(_)) => {
+                let f64t = self.context.f64_type();
+                (self.coerce_to(lhs, f64t.into()), self.coerce_to(rhs, f64t.into()))
+            }
+            (BasicValueEnum::IntValue(_), BasicValueEnum::FloatValue(r)) => {
+                (self.coerce_to(lhs, r.get_type().into()), rhs)
+            }
+            (BasicValueEnum::FloatValue(l), BasicValueEnum::IntValue(_)) => {
+                (lhs, self.coerce_to(rhs, l.get_type().into()))
+            }
+            _ => (lhs, rhs),
+        }
+    }
+
     fn emit_binary(
         &mut self,
         left: &ast::Expr,
@@ -84,6 +115,8 @@ impl<'ctx> Codegen<'ctx> {
     ) -> BasicValueEnum<'ctx> {
         let lhs = self.emit_expr(left);
         let rhs = self.emit_expr(right);
+        let (lhs, rhs) = self.unify_binary_operands(lhs, rhs);
+        // let is_int = lhs.is_int_value();
 
         let is_int   = lhs.is_int_value();
 
@@ -295,8 +328,17 @@ impl<'ctx> Codegen<'ctx> {
         };
 
         let return_type = function.get_type().get_return_type();
+        let param_types = function.get_type().get_param_types();
 
-        let args: Vec<_> = arguments.iter().map(|arg| self.emit_expr(arg).into()).collect();
+        let args: Vec<_> = arguments.iter().enumerate().map(|(i, arg)| {
+            let val = self.emit_expr(arg);
+            let val = match param_types.get(i).and_then(|pt| BasicTypeEnum::try_from(*pt).ok()) {
+                Some(pt) => self.coerce_to(val, pt),
+                None => val,
+            };
+            val.into()
+        }).collect();
+
         let call = self.builder.build_call(function, &args, "call").unwrap();
 
         match return_type {

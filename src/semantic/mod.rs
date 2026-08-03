@@ -118,11 +118,23 @@ impl<'a> SemanticAnalyzer<'a> {
                 Ok((node, result_ty))
             }
             ast::ExprKind::Binary { left, op, right } => {
-                let (l_expr, l_ty) = self.analyze_expr(*left)?;
-                let (r_expr, r_ty) = self.analyze_expr(*right)?;
+                let left_is_lit = matches!(left.value, ast::ExprKind::Literal(_));
+                let right_is_lit = matches!(right.value, ast::ExprKind::Literal(_));
+
+                let (l_expr, l_ty, r_expr, r_ty) = if left_is_lit && !right_is_lit {
+                    let (r_expr, r_ty) = self.analyze_expr(*right)?;
+                    let (l_expr, l_ty) = self.analyze_expr_expected(*left, Some(&r_ty))?;
+                    (l_expr, l_ty, r_expr, r_ty)
+                } else {
+                    let (l_expr, l_ty) = self.analyze_expr(*left)?;
+                    let (r_expr, r_ty) = self.analyze_expr_expected(*right, Some(&l_ty))?;
+                    (l_expr, l_ty, r_expr, r_ty)
+                };
+
                 if l_ty != r_ty {
                     return Err(format!("Type mismatch in binary expression: left is {:?}, right is {:?}", l_ty, r_ty));
                 }
+
                 let result_ty = match op {
                     token::TokenType::Plus | token::TokenType::Minus | token::TokenType::Star
                     | token::TokenType::Slash | token::TokenType::Mod => {
@@ -159,78 +171,30 @@ impl<'a> SemanticAnalyzer<'a> {
         }
     }
 
-    // fn analyze_unary_expr(
-    //     &mut self,
-    //     op: token::TokenType,
-    //     right: ast::Expr,
-    // ) -> Result<symbol_table::Type, String> {
-    //     let right_type = self.analyze_expr(right)?;
+    // src/semantic/mod.rs
 
-    //     match op {
-    //         token::TokenType::Minus => {
-    //             if right_type.is_numeric() {
-    //                 Ok(right_type)
-    //             } else {
-    //                 Err(format!("Cannot use '-' on type {:?}", right_type))
-    //             }
-    //         }
-    //         token::TokenType::Bang => {
-    //             if right_type == symbol_table::Type::Bool {
-    //                 Ok(symbol_table::Type::Bool)
-    //             } else {
-    //                 Err(format!("Cannot use '!' on type {:?}", right_type))
-    //             }
-    //         }
-    //         _ => Err(format!("Unknown unary operator {:?}", op)),
-    //     }
-    // }
-
-    // fn analyze_binary_expr(
-    //     &mut self,
-    //     left: ast::Expr,
-    //     op: token::TokenType,
-    //     right: ast::Expr,
-    // ) -> Result<symbol_table::Type, String> {
-    //     let left_type = self.analyze_expr(left)?;
-    //     let right_type = self.analyze_expr(right)?;
-
-    //     if left_type != right_type {
-    //         return Err(format!(
-    //             "Type mismatch in binary expression: left is {:?}, right is {:?}",
-    //             left_type, right_type
-    //         ));
-    //     }
-
-    //     match op {
-    //         token::TokenType::Plus
-    //         | token::TokenType::Minus
-    //         | token::TokenType::Star
-    //         | token::TokenType::Slash
-    //         | token::TokenType::Mod => {
-    //             if !left_type.is_numeric() && left_type != symbol_table::Type::String {
-    //                 return Err(format!("Cannot perform arithmetic on type {:?}", left_type));
-    //             }
-    //             Ok(left_type)
-    //         }
-    //         token::TokenType::Greater
-    //         | token::TokenType::GreaterEqual
-    //         | token::TokenType::Less
-    //         | token::TokenType::LessEqual
-    //         | token::TokenType::EqualEqual
-    //         | token::TokenType::BangEqual => Ok(symbol_table::Type::Bool),
-
-    //         token::TokenType::And | token::TokenType::Or => {
-    //             if left_type != symbol_table::Type::Bool {
-    //                 return Err(format!(
-    //                     "Logical operators require Bool, found {:?}",
-    //                     left_type
-    //                 ));
-    //             }
-    //             Ok(symbol_table::Type::Bool)
-    //         }
-    //         _ => Err(format!("Unknown binary operator: {:?}", op)),
-    //     }
-    // }
+    fn analyze_expr_expected(
+        &mut self,
+        expr: ast::Expr,
+        expected: Option<&symbol_table::Type>,
+    ) -> Result<(ast::Expr, symbol_table::Type), String> {
+        if let (ast::ExprKind::Literal(lit), Some(exp_ty)) = (&expr.value, expected) {
+            let compatible = match lit {
+                token::LiteralTypes::Int(_) => {
+                    exp_ty.is_numeric()
+                        && !matches!(exp_ty, symbol_table::Type::Float32 | symbol_table::Type::Float64)
+                }
+                token::LiteralTypes::Float(_) => {
+                    matches!(exp_ty, symbol_table::Type::Float32 | symbol_table::Type::Float64)
+                }
+                _ => false,
+            };
+            if compatible {
+                return Ok((expr, exp_ty.clone()));
+            }
+        }
+        self.analyze_expr(expr)
+    }
 
     fn analyze_call_expr(
         &mut self,
@@ -256,20 +220,27 @@ impl<'a> SemanticAnalyzer<'a> {
                 symbol_table::SymbolKind::FuncDecl { params, return_type } => (params.clone(), return_type.clone()),
                 _ => return Err(format!("'{}' is not a function", func_name)),
             };
-            let (rewritten_args, arg_types) = self.analyze_arguments(arguments)?;
+
+            let mut param_types: Vec<symbol_table::Type> = Vec::new();
+
+            for param in params.clone() {
+                param_types.push(param.1);
+            }
+            
+            let (rewritten_args, arg_types) = self.analyze_arguments(arguments, Some(&param_types))?;
             Self::check_arg_types(&func_name, &params, &arg_types)?;
             return Ok((Self::make_call(&func_name, rewritten_args, pos), return_type));
         }
 
         if let Some(template) = self.generic_templates.get(&func_name).cloned() {
-            let (rewritten_args, arg_types) = self.analyze_arguments(arguments)?;
+            let (rewritten_args, arg_types) = self.analyze_arguments(arguments, None)?;
             let (mangled, params, return_type) = self.instantiate_generic(&func_name, None, &template, &arg_types)?;
             Self::check_arg_types(&mangled, &params, &arg_types)?;
             return Ok((Self::make_call(&mangled, rewritten_args, pos), return_type));
         }
 
         if let Some((generics, params, ret)) = self.generic_extern_templates.get(&func_name).cloned() {
-            let (rewritten_args, arg_types) = self.analyze_arguments(arguments)?;
+            let (rewritten_args, arg_types) = self.analyze_arguments(arguments, None)?;
             let (mangled, out_params, return_type) =
                 self.instantiate_generic_extern(&func_name, &generics, &params, &ret, &arg_types)?;
             Self::check_arg_types(&mangled, &out_params, &arg_types)?;
@@ -307,14 +278,21 @@ impl<'a> SemanticAnalyzer<'a> {
                     symbol_table::SymbolKind::FuncDecl { params, return_type } => (params.clone(), return_type.clone()),
                     _ => return Err(format!("'{}' in module '{}' is not a function", field, module_name)),
                 };
-                let (rewritten_args, arg_types) = self.analyze_arguments(arguments)?;
+
+                let mut param_types: Vec<symbol_table::Type> = Vec::new();
+
+                for param in params.clone() {
+                    param_types.push(param.1);
+                }
+
+                let (rewritten_args, arg_types) = self.analyze_arguments(arguments, Some(&param_types))?;
                 Self::check_arg_types(&full_name, &params, &arg_types)?;
                 return Ok((Self::make_call(&full_name, rewritten_args, pos), return_type));
             }
         }
 
         if let Some(template) = self.generic_templates.get(&full_name).cloned() {
-            let (rewritten_args, arg_types) = self.analyze_arguments(arguments)?;
+            let (rewritten_args, arg_types) = self.analyze_arguments(arguments, None)?;
             let (mangled, params, return_type) =
                 self.instantiate_generic(&full_name, Some(&module_name), &template, &arg_types)?;
             Self::check_arg_types(&mangled, &params, &arg_types)?;
@@ -322,7 +300,7 @@ impl<'a> SemanticAnalyzer<'a> {
         }
 
         if let Some((generics, params, ret)) = self.generic_extern_templates.get(&full_name).cloned() {
-            let (rewritten_args, arg_types) = self.analyze_arguments(arguments)?;
+            let (rewritten_args, arg_types) = self.analyze_arguments(arguments, None)?;
             let (mangled, out_params, return_type) =
                 self.instantiate_generic_extern(&full_name, &generics, &params, &ret, &arg_types)?;
             Self::check_arg_types(&mangled, &out_params, &arg_types)?;
@@ -332,11 +310,16 @@ impl<'a> SemanticAnalyzer<'a> {
         Err(format!("Module '{}' has no public member '{}'", module_name, field))
     }
 
-    fn analyze_arguments(&mut self, arguments: Vec<ast::Expr>) -> Result<(Vec<ast::Expr>, Vec<symbol_table::Type>), String> {
+    fn analyze_arguments(
+        &mut self,
+        arguments: Vec<ast::Expr>,
+        expected: Option<&[symbol_table::Type]>,
+    ) -> Result<(Vec<ast::Expr>, Vec<symbol_table::Type>), String> {
         let mut rewritten = Vec::with_capacity(arguments.len());
         let mut types = Vec::with_capacity(arguments.len());
-        for arg in arguments {
-            let (r_expr, ty) = self.analyze_expr(arg)?;
+        for (i, arg) in arguments.into_iter().enumerate() {
+            let exp_ty = expected.and_then(|e| e.get(i));
+            let (r_expr, ty) = self.analyze_expr_expected(arg, exp_ty)?;
             rewritten.push(r_expr);
             types.push(ty);
         }
@@ -504,10 +487,12 @@ impl<'a> SemanticAnalyzer<'a> {
         let (var_type, rewritten_init) = match (ty, initializer) {
             (Some(type_expr), Some(init_expr)) => {
                 let declared = convert_type_expr(&type_expr);
-                let (r_init, found) = self.analyze_expr(init_expr)?;
+                let (r_init, found) = self.analyze_expr_expected(init_expr, Some(&declared))?;
+
                 if declared != found {
                     return Err(format!("Type mismatch for '{}': expected {:?}, found {:?}", name, declared, found));
                 }
+                
                 (declared, Some(r_init))
             }
             (Some(type_expr), None) => (convert_type_expr(&type_expr), None),
@@ -546,7 +531,8 @@ impl<'a> SemanticAnalyzer<'a> {
             return Err(format!("Cannot assign to immutable variable '{}'", name));
         }
 
-        let (rewritten_value, val_type) = self.analyze_expr(value)?;
+        let (rewritten_value, val_type) = self.analyze_expr_expected(value, Some(&target_type))?;
+
         if target_type != val_type {
             return Err(format!("Type mismatch in assignment to '{}': expected {:?}, found {:?}", name, target_type, val_type));
         }
@@ -560,13 +546,15 @@ impl<'a> SemanticAnalyzer<'a> {
 
         match ret_expr {
             Some(expr) => {
-                let (r_expr, ret_type) = self.analyze_expr(expr)?;
+                let (r_expr, ret_type) = self.analyze_expr_expected(expr, Some(&func_block.curr_ret_type))?;
+                
                 if func_block.curr_ret_type != ret_type {
                     return Err(format!(
                         "Return type mismatch in '{}': expected {:?}, found {:?}",
                         func_block.current_func_name, func_block.curr_ret_type, ret_type
                     ));
                 }
+
                 Ok(Some(r_expr))
             }
             None => {
@@ -576,6 +564,7 @@ impl<'a> SemanticAnalyzer<'a> {
                         func_block.current_func_name, func_block.curr_ret_type
                     ));
                 }
+
                 Ok(None)
             }
         }
