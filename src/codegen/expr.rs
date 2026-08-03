@@ -271,29 +271,15 @@ impl<'ctx> Codegen<'ctx> {
         }
     }
 
-    fn emit_call(
-        &mut self,
-        callee: &ast::Expr,
-        arguments: &[ast::Expr],
-    ) -> BasicValueEnum<'ctx> {
+    fn emit_call(&mut self, callee: &ast::Expr, arguments: &[ast::Expr]) -> BasicValueEnum<'ctx> {
         match &callee.value {
             ast::ExprKind::Identifier(name) => self.emit_named_call(name, arguments),
-
-            ast::ExprKind::Member { object, field } => {
-                let module_name = match &object.value {
-                    ast::ExprKind::Identifier(name) => name.clone(),
-                    _ => {
-                        eprintln!("Error: only 'module.function(...)' calls are supported");
-                        return self.context.i32_type().const_int(0, false).into();
-                    }
-                };
-
-                let mangled = format!("{}_{}", module_name, field);
-                self.emit_named_call(&mangled, arguments)
-            }
-
             _ => {
-                eprintln!("Error: callee must be an identifier or module member");
+                eprintln!(
+                    "Error: call callee should already be a resolved identifier after semantic \
+                     analysis — got {:?}. This means a call site wasn't rewritten.",
+                    callee.value
+                );
                 self.context.i32_type().const_int(0, false).into()
             }
         }

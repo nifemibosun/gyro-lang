@@ -115,8 +115,11 @@ fn compile(state: &mut State, source: &str, output_path: &str) {
         
     analyzer.analyze_program();
     let imported_modules = analyzer.imported_modules;
+    let monomorphized = analyzer.monomorphized;
+    let monomorphized_externs = analyzer.monomorphized_externs;
+    let resolved_ast = analyzer.resolved_ast;
 
-    codegen::compile(&ast, &imported_modules, output_path);
+    codegen::compile(&resolved_ast, &imported_modules, &monomorphized, &monomorphized_externs, output_path);
 }
 
 pub fn run() {

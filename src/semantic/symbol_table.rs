@@ -336,4 +336,8 @@ impl SymbolTable {
         }
         Err(SymbolTableError::UndefinedVariable(name.to_string()))
     }
+
+    pub fn global_scope_mut(&mut self) -> &mut HashMap<String, Symbol> {
+        self.scopes.first_mut().unwrap()
+    }
 }

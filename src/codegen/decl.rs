@@ -13,9 +13,15 @@ impl<'ctx> Codegen<'ctx> {
 
     pub fn emit_decl_with_namespace(&mut self, decl: &ast::Decl, namespace: Option<&str>) {
         match decl {
-            ast::Decl::Func(func) => self.emit_func(func, namespace),
-            ast::Decl::ExternFunc { name, params, return_type, .. } => {
-                self.emit_extern_func(name, params, return_type);
+            ast::Decl::Func(func) => {
+                if func.generics.is_empty() {
+                    self.emit_func(func, namespace);
+                }
+            }
+            ast::Decl::ExternFunc { name, generics, params, return_type, .. } => {
+                if generics.is_empty() {
+                    self.emit_extern_func(name, params, return_type);
+                }
             }
             ast::Decl::Struct { name, fields, .. } => {
                 self.emit_struct(name, fields)
@@ -64,7 +70,12 @@ impl<'ctx> Codegen<'ctx> {
             None => self.context.void_type().fn_type(&param_types, false),
         };
 
-        let llvm_name = Self::mangled_name(namespace, &func.name);
+        let llvm_name = if namespace.is_none() && func.name == "main" {
+            "gyro_main".to_string()
+        } else {
+            Self::mangled_name(namespace, &func.name)
+        };
+        
         let function = self.module.add_function(&llvm_name, fn_type, None);
 
         let entry_block = self.context.append_basic_block(function, "entry");
@@ -101,7 +112,7 @@ impl<'ctx> Codegen<'ctx> {
         }
     }
 
-    fn emit_extern_func(
+    pub fn emit_extern_func(
         &mut self,
         name: &str,
         params: &[(String, ast::TypeExpr)],

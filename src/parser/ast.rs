@@ -162,6 +162,7 @@ pub enum Decl {
     ExternFunc {
         is_public: bool,
         name: String,
+        generics: Vec<String>,
         params: Vec<(String, TypeExpr)>,
         return_type: Option<TypeExpr>,
     },

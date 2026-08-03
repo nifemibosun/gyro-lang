@@ -1,11 +1,11 @@
-extern func puts(s: string): int32;
+extern func gyro_print<T>(t: T);
 
-public func println(s: string) {
-    puts(s);
+public func print<T>(t: T) {
+    gyro_print(t);
 }
 
-public func print(s: string) {
-    puts(s);
+public func println<T>(t: T) {
+    gyro_print(t);
 }
 
 extern func atoi(s: string): int32;

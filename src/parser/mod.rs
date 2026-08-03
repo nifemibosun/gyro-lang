@@ -499,6 +499,15 @@ impl Parser {
         self.consume(TokenType::Func, "Expected 'func' after 'extern'")?;
         let name = self.consume(TokenType::Identifier, "Expected function name")?.lexeme;
 
+        let mut generics = Vec::new();
+        if self.match_token(&[TokenType::Less]) {
+            loop {
+                generics.push(self.consume(TokenType::Identifier, "Expected generic parameter name")?.lexeme);
+                if !self.match_token(&[TokenType::Comma]) { break; }
+            }
+            self.consume(TokenType::Greater, "Expected '>' after generic parameters")?;
+        }
+
         self.consume(TokenType::LParen, "Expected '(' after function name")?;
 
         let mut params = Vec::new();
@@ -524,7 +533,7 @@ impl Parser {
         self.consume(TokenType::SemiColon, "Expected ';' after extern declaration")?;
 
         Ok(ast::Node::new(
-            ast::Decl::ExternFunc { is_public, name, params, return_type },
+            ast::Decl::ExternFunc { is_public, name, generics, params, return_type },
             s_pos,
         ))
     }
