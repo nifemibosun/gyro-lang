@@ -1,5 +1,5 @@
-// This is a simple program in gyro
+import * as io from "std/io";
 
 fun main(): void {
-    println("Hello, World);
+    io.println("Hello, World");
 }

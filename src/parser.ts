@@ -302,6 +302,7 @@ export class GyroParser {
     }
 
     private tryStatement(): TryStatement {
+        this.consume(TokenType.LEFT_BRACE, "Expected '{' after 'try'");
         const body = this.blockStatement();
 
         let catchClause: CatchClause | undefined;
@@ -311,12 +312,14 @@ export class GyroParser {
                 parameter = this.consume(TokenType.IDENTIFIER, "Expected catch parameter name").value;
                 this.consume(TokenType.RIGHT_PAREN, "Expected ')' after catch parameter");
             }
+            this.consume(TokenType.LEFT_BRACE, "Expected '{' after catch clause");
             const catchBody = this.blockStatement();
             catchClause = { type: 'CatchClause', parameter, body: catchBody };
         }
 
         let finallyBlock: BlockStatement | undefined;
         if (this.match(TokenType.FINALLY)) {
+            this.consume(TokenType.LEFT_BRACE, "Expected '{' after 'finally'");
             finallyBlock = this.blockStatement();
         }
 

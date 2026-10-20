@@ -1,0 +1,19 @@
+import * as io from "std/io";
+import * as math from "std/math";
+
+fun main(): void {
+    let a: int = 10;
+    let b: int = 5;
+    let result: int = (a + b) * 3;
+
+    io.println("Gyro string test");
+    io.println(result);
+
+    if (result == 45) {
+        io.println("Condition passed");
+    } else {
+        io.println("Condition failed");
+    }
+
+    io.println(math.sqrt(81));
+}

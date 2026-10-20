@@ -8,7 +8,7 @@ import readline from 'readline';
 import { compile } from './codegen.js';
 import { GyroVM } from './vm.js';
 
-const GYRO_VERSION = '0.2.0';
+const GYRO_VERSION = '0.3.0';
 
 function printHelp() {
     console.log(`
@@ -139,7 +139,7 @@ function showGBCInfo(gbc: any, filename: string) {
     }
 
     if (gbc.functions?.length > 0) {
-        console.log('\n⚡ Functions:');
+        console.log('\n Functions:');
         gbc.functions.forEach((fn: any) => {
             console.log(`  • ${fn.name}(${fn.params?.join(', ') || ''}) -> ${fn.returnType || 'void'}`);
         });
@@ -233,7 +233,8 @@ async function main() {
                 break;
             }
 
-            case 'comp': {
+            case 'comp':
+            case 'compile': {
                 let filename = file;
 
                 if (!filename) {
@@ -262,19 +263,8 @@ async function main() {
                 }
 
                 let outPath = options['output'] || options['o'] || filename.replace(/\.gyro$/, '.gbc');
-            
-                // try {
-                    // const config = JSON.parse(fs.readFileSync('gyro.config.json', 'utf-8'));
-                //     if (!options['output'] && !options['o']) {
-                //         const baseName = path.basename(filename, '.gyro');
-                //         const outDir = config.outDir || '.';
-                //         if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
-                //         outPath = path.join(outDir, `${baseName}.gbc`);
-                //     }
-                // } catch (err: unknown) {
-                //     throw new Error(`Error: ${err}`);
-                // }
 
+                fs.mkdirSync(path.dirname(path.resolve(outPath)), { recursive: true });
                 fs.writeFileSync(outPath, JSON.stringify(compiled, null, 2));
                 console.log(`Compiled to ${outPath}`);
                 
@@ -399,7 +389,7 @@ async function main() {
 
                 const config = {
                     name: projectName,
-                    version: '0.2.0',
+                    version: GYRO_VERSION,
                     entry: 'src/main.gyro',
                     outDir: 'dist',
                     target: 'gyro-vm',

@@ -1,4 +1,5 @@
 import { tokenize } from './lexer.js';
+import { ASTFactory } from './ast.js';
 import { parse } from './parser.js'
 import { OpCode } from './opcodes.js';
 import { TokenType } from './lexer.js';
@@ -9,8 +10,8 @@ import type {
     BlockStatement, IfStatement, WhileStatement, ReturnStatement,
     BinaryExpression, UnaryExpression, CallExpression, MemberExpression,
     LiteralExpression, IdentifierExpression, ArrayExpression, ForStatement,
-    ObjectLiteralExpression, ExpressionStatement, AssignmentExpression,
-} from './ast.ts';
+    ObjectLiteralExpression, ExpressionStatement, AssignmentExpression, ImportStatement, TypeAnnotation,
+} from './ast.js';
 
 
 export interface CompilationResult {
@@ -20,6 +21,11 @@ export interface CompilationResult {
     classes?: any[];
     functions?: any[];
     exceptionHandlers?: any[];
+}
+
+interface LoopContext {
+    breakPatches: number[];
+    continuePatches: number[];
 }
 
 interface CompilerContext {
@@ -37,8 +43,7 @@ interface CompilerContext {
     localCount: number;
     globalCount: number;
 
-    breakTargets: number[];
-    continueTargets: number[];
+    loopStack: LoopContext[];
 
     exceptionHandlers: any[];
 }
@@ -46,11 +51,44 @@ interface CompilerContext {
 export class GyroCodeGenerator {
     private ctx: CompilerContext;
     private typeInference: TypeInferenceEngine;
-    private builtInFunctions = new Set(['println', 'input']);
-    private builtInArgCounts: Map<string, number> = new Map([
-        ['println', 1],
-        ['input', 0],
+    private readonly functionCallPatches: Array<{ operandIndex: number; functionName: string }> = [];
+    private readonly builtInArgCounts = new Map<string, number>([
+        ['print', 1], ['println', 1], ['input', 0],
+        ['malloc', 1], ['free', 1], ['len', 1], ['str', 1],
+        ['int', 1], ['float', 1], ['typeOf', 1], ['assert', 1],
+        ['abs', 1], ['floor', 1], ['ceil', 1], ['round', 1], ['sqrt', 1],
+        ['pow', 2], ['min', 2], ['max', 2], ['sin', 1], ['cos', 1],
+        ['tan', 1], ['log', 1], ['exp', 1], ['random', 0],
+        ['stringLength', 1], ['stringCharAt', 2], ['stringSubstring', 3],
+        ['stringIndexOf', 2], ['stringContains', 2], ['stringStartsWith', 2],
+        ['stringEndsWith', 2], ['stringReplace', 3], ['stringSplit', 2],
+        ['stringToInt', 1], ['stringToFloat', 1],
+        ['arrayLength', 1], ['arrayPush', 2], ['arrayPop', 1],
+        ['arrayJoin', 2], ['arrayIncludes', 2],
     ]);
+
+    private readonly standardModules: Record<string, Record<string, string>> = {
+        'std/io': { print: 'print', println: 'println', input: 'input' },
+        'std/math': {
+            abs: 'abs', floor: 'floor', ceil: 'ceil', round: 'round', sqrt: 'sqrt',
+            pow: 'pow', min: 'min', max: 'max', sin: 'sin', cos: 'cos', tan: 'tan',
+            log: 'log', exp: 'exp', random: 'random',
+        },
+        'std/string': {
+            length: 'stringLength', charAt: 'stringCharAt', substring: 'stringSubstring',
+            indexOf: 'stringIndexOf', contains: 'stringContains',
+            startsWith: 'stringStartsWith', endsWith: 'stringEndsWith',
+            replace: 'stringReplace', split: 'stringSplit', toInt: 'stringToInt',
+            toFloat: 'stringToFloat',
+        },
+        'std/array': {
+            length: 'arrayLength', push: 'arrayPush', pop: 'arrayPop',
+            join: 'arrayJoin', includes: 'arrayIncludes',
+        },
+    };
+
+    private readonly moduleNamespaces = new Map<string, string>();
+    private readonly builtinAliases = new Map<string, string>();
 
     constructor() {
         this.ctx = {
@@ -63,8 +101,7 @@ export class GyroCodeGenerator {
             functions: new Map(),
             localCount: 0,
             globalCount: 0,
-            breakTargets: [],
-            continueTargets: [],
+            loopStack: [],
             exceptionHandlers: []
         };
         this.typeInference = new TypeInferenceEngine();
@@ -77,7 +114,7 @@ export class GyroCodeGenerator {
 
         return {
             metadata: {
-                version: '0.2.0',
+                version: '0.3.0',
                 target: 'gyro-vm',
                 createdBy: 'gyro-compiler',
                 timestamp: new Date().toISOString(),
@@ -132,48 +169,43 @@ export class GyroCodeGenerator {
     private generateForStatement(node: ForStatement): void {
         const savedLocals = new Map(this.ctx.locals);
         const savedLocalCount = this.ctx.localCount;
+        this.typeInference.enterScope();
 
-        if (node.initializer) {
-            this.generateStatement(node.initializer);
-        }
-        
+        if (node.initializer) this.generateStatement(node.initializer);
+
         const loopStart = this.ctx.bytecode.length;
-        this.ctx.continueTargets.push(this.ctx.bytecode.length);
-        
         let exitJumpPatch: number | undefined;
         if (node.condition) {
             this.generateExpression(node.condition);
             exitJumpPatch = this.emitJump(OpCode.JZ);
         }
-        
-        this.ctx.breakTargets.push(exitJumpPatch !== undefined ? exitJumpPatch : -1);
 
+        const loop: LoopContext = { breakPatches: [], continuePatches: [] };
+        this.ctx.loopStack.push(loop);
         this.generateStatement(node.body);
-        
+
+        const continueTarget = this.ctx.bytecode.length;
+        for (const patch of loop.continuePatches) this.patchJump(patch, continueTarget);
         if (node.increment) {
-            const continueTarget = this.ctx.continueTargets.pop();
-            if (continueTarget !== undefined) {
-                this.ctx.continueTargets.push(this.ctx.bytecode.length);
-            }
             this.generateExpression(node.increment);
-            this.emit(OpCode.POP);
+            // Assignment expressions update their target without leaving a value on
+            // the stack. Other increment expressions must have their value discarded.
+            if (node.increment.type !== 'AssignmentExpression') this.emit(OpCode.POP);
         }
 
         this.emitLoop(loopStart);
-
-        this.patchJump(this.ctx.breakTargets.pop()!);
-        this.ctx.continueTargets.pop();
+        const loopEnd = this.ctx.bytecode.length;
+        if (exitJumpPatch !== undefined) this.patchJump(exitJumpPatch, loopEnd);
+        for (const patch of loop.breakPatches) this.patchJump(patch, loopEnd);
+        this.ctx.loopStack.pop();
 
         const localsInScope = this.ctx.localCount - savedLocalCount;
-        if (localsInScope > 0) {
-            this.emit(OpCode.POP);
-            this.emit(localsInScope);
-        }
-
+        for (let i = 0; i < localsInScope; i++) this.emit(OpCode.POP);
         this.ctx.locals = savedLocals;
         this.ctx.localCount = savedLocalCount;
+        this.typeInference.exitScope();
     }
-    
+
     private validateVariableDeclarationTypes(node: VariableDeclaration): void {
         if (node.initializer) {
             const inferredType = this.typeInference.inferExpressionType(node.initializer);
@@ -246,7 +278,74 @@ export class GyroCodeGenerator {
         }
     }
 
+    private nativeReturnType(nativeName: string): string {
+        if (['print', 'println', 'assert', 'free'].includes(nativeName)) return 'void';
+        if (nativeName === 'input' || nativeName === 'str' || nativeName === 'typeOf'
+            || nativeName.startsWith('stringCharAt') || nativeName === 'stringSubstring'
+            || nativeName === 'stringReplace' || nativeName === 'arrayJoin') return 'string';
+        if (['len', 'int', 'stringLength', 'stringIndexOf', 'stringToInt', 'arrayLength', 'arrayPush'].includes(nativeName)) return 'int';
+        if (nativeName === 'stringSplit') return 'array';
+        if (['stringContains', 'stringStartsWith', 'stringEndsWith', 'arrayIncludes'].includes(nativeName)) return 'bool';
+        if (['float', 'stringToFloat', 'abs', 'floor', 'ceil', 'round', 'sqrt', 'pow', 'min', 'max', 'sin', 'cos', 'tan', 'log', 'exp', 'random'].includes(nativeName)) return 'float';
+        return 'any';
+    }
+
     public collectDeclarations(ast: Program): void {
+        this.moduleNamespaces.clear();
+        this.builtinAliases.clear();
+
+        // Resolve the standard-library import declarations before collecting callable declarations.
+        for (const stmt of ast.body) {
+            if (stmt.type !== 'ImportStatement') continue;
+            const importStmt = stmt as ImportStatement;
+            const moduleName = importStmt.source.replace(/\\/g, '/').replace(/\.gyro$/, '');
+            const exports = this.standardModules[moduleName];
+            if (!exports) {
+                throw new Error(
+                    `Unsupported module '${importStmt.source}'. Available modules: ${Object.keys(this.standardModules).join(', ')}`
+                );
+            }
+
+            for (const specifier of importStmt.specifiers) {
+                if (specifier.isNamespace) {
+                    const local = specifier.local ?? specifier.imported;
+                    this.moduleNamespaces.set(local, moduleName);
+                    for (const [exportedName, nativeName] of Object.entries(exports)) {
+                        this.typeInference.registerFunction(
+                            `${local}.${exportedName}`,
+                            ASTFactory.typeAnnotation(this.nativeReturnType(nativeName)),
+                        );
+                    }
+                    continue;
+                }
+
+                const nativeName = exports[specifier.imported];
+                if (!nativeName) {
+                    throw new Error(`Module '${moduleName}' does not export '${specifier.imported}'`);
+                }
+                const local = specifier.local ?? specifier.imported;
+                if (this.builtinAliases.has(local)) {
+                    throw new Error(`Duplicate import binding '${local}'`);
+                }
+                this.builtinAliases.set(local, nativeName);
+                this.typeInference.registerFunction(local, ASTFactory.typeAnnotation(this.nativeReturnType(nativeName)));
+            }
+        }
+
+        // Reserve global slots before compiling function bodies so functions may refer to
+        // globals declared later in the source file.
+        for (const stmt of ast.body) {
+            if (stmt.type !== 'VariableDeclaration') continue;
+            const variable = stmt as VariableDeclaration;
+            if (this.ctx.globals.has(variable.name)) {
+                throw new Error(`Duplicate global variable '${variable.name}'.`);
+            }
+            this.ctx.globals.set(variable.name, this.ctx.globalCount++);
+            const inferred = variable.typeAnnotation
+                ?? (variable.initializer ? this.typeInference.inferExpressionType(variable.initializer) : undefined);
+            if (inferred) this.typeInference.registerVariable(variable.name, inferred);
+        }
+
         for (const stmt of ast.body) {
             if (stmt.type === 'ClassDeclaration') {
                 this.collectClass(stmt as ClassDeclaration);
@@ -274,16 +373,17 @@ export class GyroCodeGenerator {
                 returnType: method.returnType?.name || 'void'
             });
 
-            this.collectFunction({
-                ...method,
-                name: `${node.name}_${method.name}`,
-            });
+            this.collectFunction({ ...method, name: `${node.name}_${method.name}` });
         }
 
         this.ctx.classes.set(node.name, classDef);
     }
 
     private collectFunction(node: FunctionDeclaration): void {
+        this.typeInference.registerFunction(
+            node.name,
+            node.returnType ?? ASTFactory.typeAnnotation('any'),
+        );
         const funcDef = {
             name: node.name,
             address: 0,
@@ -300,13 +400,30 @@ export class GyroCodeGenerator {
 
     private generateProgram(ast: Program): void {
         const mainFuncDef = this.ctx.functions.get('main');
-
         if (!mainFuncDef) {
             throw new Error("Compilation Error: 'main' function is required as the program entry point.");
         }
-        
         if (mainFuncDef.parameters.length > 0) {
             throw new Error("Compilation Error: The 'main' function cannot accept arguments.");
+        }
+
+        // The entry jump skips over function bodies to their startup/global-initializer section.
+        // This lets top-level initializers call functions whose addresses are known by then.
+        const entryJumpPatch = this.emitJump(OpCode.JMP);
+
+        for (const stmt of ast.body) {
+            if (stmt.type === 'FunctionDeclaration' || stmt.type === 'ClassDeclaration') {
+                this.generateStatement(stmt);
+            }
+        }
+
+        const globalInitAddress = this.ctx.bytecode.length;
+        this.patchJump(entryJumpPatch, globalInitAddress);
+
+        for (const stmt of ast.body) {
+            if (stmt.type === 'VariableDeclaration') {
+                this.generateVariableDeclaration(stmt as VariableDeclaration);
+            }
         }
 
         this.emit(OpCode.CALL);
@@ -316,32 +433,26 @@ export class GyroCodeGenerator {
         this.emit(0);
         this.emit(OpCode.EXIT);
 
-        for (const stmt of ast.body) {
-            if (stmt.type === 'FunctionDeclaration' || stmt.type === 'ClassDeclaration') {
-                this.generateStatement(stmt);
-            }
+        const mainAddress = this.ctx.functions.get('main')?.address;
+        if (mainAddress === undefined) {
+            throw new Error("Internal Compiler Error: Could not resolve 'main' function address.");
         }
+        this.ctx.bytecode[mainCallAddressOffset] = (mainAddress >> 8) & 0xFF;
+        this.ctx.bytecode[mainCallAddressOffset + 1] = mainAddress & 0xFF;
 
         for (const stmt of ast.body) {
             switch (stmt.type) {
+                case 'ImportStatement':
+                case 'VariableDeclaration':
                 case 'FunctionDeclaration':
                 case 'ClassDeclaration':
-                case 'VariableDeclaration':
                     break;
                 default:
                     throw new Error(`Unexpected top-level statement of type '${stmt.type}'`);
             }
         }
 
-        const finalMainAddress = this.ctx.functions.get('main')?.address;
-        if (finalMainAddress === undefined) {
-            throw new Error("Internal Compiler Error: Could not resolve 'main' function address after compilation.");
-        }
-        
-        const highByte = (finalMainAddress >> 8) & 0xFF;
-        const lowByte = finalMainAddress & 0xFF;
-        this.ctx.bytecode[mainCallAddressOffset] = highByte;
-        this.ctx.bytecode[mainCallAddressOffset + 1] = lowByte;
+        this.patchFunctionCalls();
     }
 
     private generateStatement(stmt: Statement): void {
@@ -398,12 +509,8 @@ export class GyroCodeGenerator {
         }
     }
 
-    private generateImportStatement(node: any): void {
-        // Todo(For now, imports are handled during collection phase)
-        
-        const source = node.source;
-        const specifiers = node.specifiers;
-        
+    private generateImportStatement(_node: ImportStatement): void {
+        // Standard-library imports are resolved before bytecode generation.
     }
 
     private generateVariableDeclaration(node: VariableDeclaration): void {
@@ -413,7 +520,7 @@ export class GyroCodeGenerator {
             this.generateExpression(node.initializer);
             const inferredType = this.typeInference.inferExpressionType(node.initializer);
 
-            if (actualType && actualType.name !== inferredType.name) {
+            if (actualType && inferredType.name !== 'any' && actualType.name !== inferredType.name) {
                 throw new Error(`Type mismatch: Cannot assign '${inferredType.name}' to variable of type '${actualType.name}'`);
             }
 
@@ -429,10 +536,20 @@ export class GyroCodeGenerator {
 
         this.typeInference.registerVariable(node.name, actualType);
 
-        const globalIndex = this.ctx.globalCount++;
-        this.ctx.globals.set(node.name, globalIndex);
-        this.emit(OpCode.STORE_GLOBAL);
-        this.emit(globalIndex);
+        if (this.ctx.currentFunction) {
+            const localIndex = this.ctx.localCount++;
+            this.ctx.locals.set(node.name, localIndex);
+            this.emit(OpCode.STORE_LOCAL);
+            this.emit(localIndex);
+        } else {
+            let globalIndex = this.ctx.globals.get(node.name);
+            if (globalIndex === undefined) {
+                globalIndex = this.ctx.globalCount++;
+                this.ctx.globals.set(node.name, globalIndex);
+            }
+            this.emit(OpCode.STORE_GLOBAL);
+            this.emit(globalIndex);
+        }
     }
 
     private generateFunctionDeclaration(node: FunctionDeclaration): void {
@@ -447,8 +564,6 @@ export class GyroCodeGenerator {
 
         this.typeInference.registerFunction(node.name, node.returnType);
 
-        this.typeInference.validateFunctionReturnType(node);
-
         const savedLocals = new Map(this.ctx.locals);
         const savedLocalCount = this.ctx.localCount;
         const savedFunction = this.ctx.currentFunction;
@@ -456,9 +571,14 @@ export class GyroCodeGenerator {
         this.ctx.currentFunction = node.name;
         this.ctx.locals.clear();
         this.ctx.localCount = 0;
+        this.typeInference.enterScope();
 
         if (this.ctx.currentClass) {
-            this.ctx.locals.set('this', this.ctx.localCount++);
+            const receiverIndex = this.ctx.localCount++;
+            this.ctx.locals.set('this', receiverIndex);
+            this.ctx.locals.set('self', receiverIndex);
+            this.typeInference.registerVariable('this', ASTFactory.typeAnnotation(this.ctx.currentClass));
+            this.typeInference.registerVariable('self', ASTFactory.typeAnnotation(this.ctx.currentClass));
         }
 
         for (let i = 0; i < node.parameters.length; i++) {
@@ -471,57 +591,86 @@ export class GyroCodeGenerator {
             }
         }
 
+        this.typeInference.validateFunctionReturnType(node);
         this.generateStatement(node.body);
 
-        if (this.ctx.bytecode[this.ctx.bytecode.length - 1] !== OpCode.RET) {
-            if (node.returnType.name === 'void') {
-                this.emit(OpCode.PUSH_NULL);
-                this.emit(OpCode.RET);
-            } else {
-                throw new Error(`Function '${node.name}' with return type '${node.returnType.name}' must have explicit return statement`);
-            }
+        if (node.returnType.name === 'void') {
+            // A block emits local cleanup after return statements, so checking the last
+            // opcode is not reliable. Every void function gets a safe fall-through return.
+            this.emit(OpCode.PUSH_NULL);
+            this.emit(OpCode.RET);
+        } else if (!this.definitelyReturns(node.body)) {
+            throw new Error(`Function '${node.name}' with return type '${node.returnType.name}' must return a value on every path`);
         }
 
         if (funcDef) {
             funcDef.localCount = this.ctx.localCount;
         }
 
+        this.typeInference.exitScope();
         this.ctx.locals = savedLocals;
         this.ctx.localCount = savedLocalCount;
         this.ctx.currentFunction = savedFunction;
     }
 
+    private definitelyReturns(stmt: Statement): boolean {
+        switch (stmt.type) {
+            case 'ReturnStatement':
+                return true;
+            case 'BlockStatement': {
+                const block = stmt as BlockStatement;
+                return block.statements.some(child => this.definitelyReturns(child));
+            }
+            case 'IfStatement': {
+                const branch = stmt as IfStatement;
+                return !!branch.elseBranch && this.definitelyReturns(branch.thenBranch) && this.definitelyReturns(branch.elseBranch);
+            }
+            case 'TryStatement': {
+                const tryStmt = stmt as TryStatement;
+                return this.definitelyReturns(tryStmt.body)
+                    && (!tryStmt.catchClause || this.definitelyReturns(tryStmt.catchClause.body));
+            }
+            default:
+                return false;
+        }
+    }
+
     private generateClassDeclaration(node: ClassDeclaration): void {
+        const classDef = this.ctx.classes.get(node.name);
+        const previousClass = this.ctx.currentClass;
+        this.ctx.currentClass = node.name;
+
         for (const method of node.methods) {
             const methodName = `${node.name}_${method.name}`;
-            const funcDef = this.ctx.functions.get(methodName) || {
-                name: methodName,
-                address: this.ctx.bytecode.length,
-                params: method.parameters.map(p => p.name),
-                returnType: method.returnType?.name || 'void'
-            };
+            const qualifiedMethod = { ...method, name: methodName };
+            const funcDef = this.ctx.functions.get(methodName);
+            if (!funcDef) throw new Error(`Missing method declaration '${methodName}'`);
 
-            this.ctx.functions.set(methodName, funcDef);
-            this.generateFunctionDeclaration(method);
+            this.generateFunctionDeclaration(qualifiedMethod);
+            const classMethod = classDef?.methods.find((entry: any) => entry.name === method.name);
+            if (classMethod) classMethod.address = funcDef.address;
         }
+
+        this.ctx.currentClass = previousClass;
     }
 
     private generateBlockStatement(node: BlockStatement): void {
         const savedLocals = new Map(this.ctx.locals);
         const savedLocalCount = this.ctx.localCount;
+        this.typeInference.enterScope();
 
-        for (const stmt of node.statements) {
-            this.generateStatement(stmt);
+        try {
+            for (const stmt of node.statements) {
+                this.generateStatement(stmt);
+            }
+
+            const localsInScope = this.ctx.localCount - savedLocalCount;
+            for (let i = 0; i < localsInScope; i++) this.emit(OpCode.POP);
+        } finally {
+            this.ctx.locals = savedLocals;
+            this.ctx.localCount = savedLocalCount;
+            this.typeInference.exitScope();
         }
-
-        const localsInScope = this.ctx.localCount - savedLocalCount;
-        if (localsInScope > 0) {
-            this.emit(OpCode.POP); 
-            this.emit(localsInScope);
-        }
-
-        this.ctx.locals = savedLocals;
-        this.ctx.localCount = savedLocalCount;
     }
 
     private generateIfStatement(node: IfStatement): void {
@@ -542,40 +691,52 @@ export class GyroCodeGenerator {
 
     private generateWhileStatement(node: WhileStatement): void {
         const loopStart = this.ctx.bytecode.length;
-        this.ctx.continueTargets.push(loopStart);
-
         this.generateExpression(node.condition);
         const exitJumpPatch = this.emitJump(OpCode.JZ);
-        this.ctx.breakTargets.push(exitJumpPatch);
+        const loop: LoopContext = { breakPatches: [], continuePatches: [] };
+        this.ctx.loopStack.push(loop);
 
         this.generateStatement(node.body);
-
+        for (const patch of loop.continuePatches) this.patchJump(patch, loopStart);
         this.emitLoop(loopStart);
 
-        this.patchJump(this.ctx.breakTargets.pop()!);
-        this.ctx.continueTargets.pop();
+        const loopEnd = this.ctx.bytecode.length;
+        this.patchJump(exitJumpPatch, loopEnd);
+        for (const patch of loop.breakPatches) this.patchJump(patch, loopEnd);
+        this.ctx.loopStack.pop();
     }
 
     private generateBreakStatement(): void {
-        if (this.ctx.breakTargets.length === 0) {
-            throw new Error("Break statement must be inside a loop.");
-        }
-
-        const jumpPlaceholderAddress = this.emitJump(OpCode.JMP);
-        this.ctx.breakTargets.push(jumpPlaceholderAddress);
+        const loop = this.ctx.loopStack[this.ctx.loopStack.length - 1];
+        if (!loop) throw new Error("Break statement must be inside a loop.");
+        loop.breakPatches.push(this.emitJump(OpCode.JMP));
     }
 
     private generateContinueStatement(): void {
-        if (this.ctx.continueTargets.length === 0) {
-            throw new Error("Continue statement must be inside a loop.");
-        }
-        const continueTarget = this.ctx.continueTargets[this.ctx.continueTargets.length - 1];
-        this.emit(OpCode.JMP);
-        this.emit(continueTarget);
+        const loop = this.ctx.loopStack[this.ctx.loopStack.length - 1];
+        if (!loop) throw new Error("Continue statement must be inside a loop.");
+        loop.continuePatches.push(this.emitJump(OpCode.JMP));
     }
 
     private generateReturnStatement(node: ReturnStatement): void {
+        const declaredReturnType = this.ctx.currentFunction
+            ? this.ctx.functions.get(this.ctx.currentFunction)?.returnType
+            : undefined;
+
+        if (declaredReturnType === 'void' && node.value) {
+            throw new Error(`Void function '${this.ctx.currentFunction}' cannot return a value.`);
+        }
+        if (declaredReturnType && declaredReturnType !== 'void' && !node.value) {
+            throw new Error(`Function '${this.ctx.currentFunction}' must return a value of type '${declaredReturnType}'.`);
+        }
+
         if (node.value) {
+            const actual = this.typeInference.inferExpressionType(node.value).name;
+            const expected = declaredReturnType ?? 'any';
+            if (actual !== 'any' && expected !== 'any'
+                && this.normalizeTypeName(actual) !== this.normalizeTypeName(expected)) {
+                throw new Error(`Return type mismatch in '${this.ctx.currentFunction}': expected '${expected}', got '${actual}'.`);
+            }
             this.generateExpression(node.value);
         } else {
             this.emit(OpCode.PUSH_NULL);
@@ -585,39 +746,101 @@ export class GyroCodeGenerator {
 
     private generateTryStatement(node: TryStatement): void {
         const tryStart = this.ctx.bytecode.length;
-
         this.generateStatement(node.body);
+        const tryEnd = this.ctx.bytecode.length - 1;
+        const normalJump = this.emitJump(OpCode.JMP);
 
-        const tryEnd = this.ctx.bytecode.length;
-        let catchStart = 0;
-        let finallyStart = 0;
+        let catchStart: number | undefined;
+        let catchBodyStart: number | undefined;
+        let catchBodyEnd: number | undefined;
+        let catchToFinallyJump: number | undefined;
+        let catchToEndJump: number | undefined;
+        let exceptionBridge: number | undefined;
 
         if (node.catchClause) {
             catchStart = this.ctx.bytecode.length;
             this.emit(OpCode.CATCH);
 
+            const savedLocals = new Map(this.ctx.locals);
+            const savedLocalCount = this.ctx.localCount;
+            this.typeInference.enterScope();
             if (node.catchClause.parameter) {
                 const localIndex = this.ctx.localCount++;
                 this.ctx.locals.set(node.catchClause.parameter, localIndex);
+                this.typeInference.registerVariable(node.catchClause.parameter, ASTFactory.typeAnnotation('any'));
                 this.emit(OpCode.STORE_LOCAL);
                 this.emit(localIndex);
+            } else {
+                this.emit(OpCode.POP);
             }
 
+            catchBodyStart = this.ctx.bytecode.length;
             this.generateStatement(node.catchClause.body);
+            catchBodyEnd = this.ctx.bytecode.length - 1;
+
+            if (node.catchClause.parameter) this.emit(OpCode.POP);
+            this.typeInference.exitScope();
+            this.ctx.locals = savedLocals;
+            this.ctx.localCount = savedLocalCount;
+
+            if (node.finallyBlock) catchToFinallyJump = this.emitJump(OpCode.JMP);
+            else catchToEndJump = this.emitJump(OpCode.JMP);
         }
 
         if (node.finallyBlock) {
-            finallyStart = this.ctx.bytecode.length;
-            this.generateStatement(node.finallyBlock);
-        }
+            // Exceptions caught from the try body (or from the catch body) execute a
+            // duplicated finalizer and then rethrow. The normal path executes it once.
+            if (node.catchClause) {
+                exceptionBridge = this.ctx.bytecode.length;
+                this.emit(OpCode.POP); // discard the exception value placed on the stack by the VM
+                this.generateStatement(node.finallyBlock);
+                this.emit(OpCode.RETHROW);
+            } else {
+                exceptionBridge = this.ctx.bytecode.length;
+                this.emit(OpCode.POP);
+                this.generateStatement(node.finallyBlock);
+                this.emit(OpCode.RETHROW);
+            }
 
-        if (node.catchClause || node.finallyBlock) {
-            this.ctx.exceptionHandlers.push({
-                tryStart,
-                tryEnd,
-                catchStart: catchStart || 0,
-                finallyStart: finallyStart || 0
-            });
+            const finallyStart = this.ctx.bytecode.length;
+            this.generateStatement(node.finallyBlock);
+            this.emit(OpCode.FINALLY_END);
+            const finallyEnd = this.ctx.bytecode.length - 1;
+            this.patchJump(normalJump, finallyStart);
+            if (catchToFinallyJump !== undefined) this.patchJump(catchToFinallyJump, finallyStart);
+
+            if (catchStart !== undefined && catchBodyStart !== undefined && catchBodyEnd !== undefined && exceptionBridge !== undefined) {
+                // Errors thrown by a catch body must still run finally before escaping.
+                this.ctx.exceptionHandlers.push({
+                    tryStart: catchBodyStart,
+                    tryEnd: catchBodyEnd,
+                    catchStart: exceptionBridge,
+                    finallyStart,
+                    finallyEnd,
+                });
+                this.ctx.exceptionHandlers.push({
+                    tryStart,
+                    tryEnd,
+                    catchStart,
+                    finallyStart,
+                    finallyEnd,
+                });
+            } else if (exceptionBridge !== undefined) {
+                this.ctx.exceptionHandlers.push({
+                    tryStart,
+                    tryEnd,
+                    catchStart: exceptionBridge,
+                    finallyStart,
+                    finallyEnd,
+                });
+            }
+        } else {
+            const end = this.ctx.bytecode.length;
+            this.patchJump(normalJump, end);
+            if (catchToEndJump !== undefined) this.patchJump(catchToEndJump, end);
+            if (catchStart !== undefined) {
+                this.ctx.exceptionHandlers.push({ tryStart, tryEnd, catchStart });
+            }
         }
     }
 
@@ -756,89 +979,99 @@ export class GyroCodeGenerator {
     private generateCallExpression(node: CallExpression): void {
         if (node.callee.type === 'MemberExpression') {
             const member = node.callee as MemberExpression;
+            if (member.property.type !== 'IdentifierExpression') {
+                throw new Error('Only named methods can be called');
+            }
             const methodName = (member.property as IdentifierExpression).name;
 
-            if (member.object.type === 'IdentifierExpression' && this.ctx.classes.has((member.object as IdentifierExpression).name)) {
-                for (const arg of node.arguments) {
-                    this.generateExpression(arg);
-                }
-                const className = (member.object as IdentifierExpression).name;
-                const fullMethodName = `${className}_${methodName}`;
-                const funcDef = this.ctx.functions.get(fullMethodName);
-
-                if (funcDef) {
-                    this.emit(OpCode.CALL);
-                    const highByte = (funcDef.address >> 8) & 0xFF;
-                    const lowByte = funcDef.address & 0xFF;
-                    this.emit(highByte);
-                    this.emit(lowByte);
-                    this.emit(node.arguments.length);
-                } else {
-                    throw new Error(`Unknown static method: ${className}.${methodName}`);
-                }
-            } else {
-                this.generateExpression(member.object);
-
-                for (const arg of node.arguments) {
-                    this.generateExpression(arg);
+            if (member.object.type === 'IdentifierExpression') {
+                const objectName = (member.object as IdentifierExpression).name;
+                const moduleName = this.moduleNamespaces.get(objectName);
+                if (moduleName) {
+                    const nativeName = this.standardModules[moduleName]?.[methodName];
+                    if (!nativeName) throw new Error(`Module '${moduleName}' does not export '${methodName}'`);
+                    this.emitNativeCall(nativeName, node.arguments);
+                    return;
                 }
 
-                this.emit(OpCode.METHOD_CALL);
-                this.emit(this.addConstant(methodName));
-                this.emit(node.arguments.length);
+                if (this.ctx.classes.has(objectName)) {
+                    const fullMethodName = `${objectName}_${methodName}`;
+                    const funcDef = this.ctx.functions.get(fullMethodName);
+                    if (!funcDef) throw new Error(`Unknown static method: ${objectName}.${methodName}`);
+                    for (const arg of node.arguments) this.generateExpression(arg);
+                    this.emitFunctionCall(fullMethodName, node.arguments.length);
+                    return;
+                }
             }
-        } else if (node.callee.type === 'IdentifierExpression') {
-            const funcName = (node.callee as IdentifierExpression).name;
 
-            if (this.ctx.functions.has(funcName) || this.isBuiltIn(funcName)) {
-                let expectedArgs: number;
-                let funcDef;
-
-                if (this.isBuiltIn(funcName)) {
-                    expectedArgs = this.getExpectedArgCount(funcName);
-                } else {
-                    funcDef = this.ctx.functions.get(funcName);
-                    if (!funcDef) {
-                        throw new Error(`Unknown function: ${funcName}`);
-                    }
-                    expectedArgs = funcDef.parameters.length;
-                }
-
-                if (node.arguments.length !== expectedArgs) {
-                    throw new Error(`Function '${funcName}' expects ${expectedArgs} arguments, but received ${node.arguments.length}`);
-                }
-
-                for (const arg of node.arguments) {
-                    this.generateExpression(arg);
-                }
-
-                if (this.isBuiltIn(funcName)) {
-                    switch (funcName) {
-                        case 'println':
-                            this.emit(OpCode.PRINT_LN);
-                            break;
-                        case 'input':
-                            this.emit(OpCode.INPUT);
-                            break;
-                        case 'malloc':
-                            this.emit(OpCode.MALLOC);
-                            break;
-                        case 'free':
-                            this.emit(OpCode.FREE);
-                            break;
-                    }
-                } else {
-                    this.emit(OpCode.CALL);
-                    const highByte = (funcDef!.address >> 8) & 0xFF;
-                    const lowByte = funcDef!.address & 0xFF;
-                    this.emit(highByte);
-                    this.emit(lowByte);
-                    this.emit(node.arguments.length);
-                }
-            } else {
-                throw new Error(`Unknown function: ${funcName}`);
-            }
+            this.generateExpression(member.object);
+            for (const arg of node.arguments) this.generateExpression(arg);
+            this.emit(OpCode.METHOD_CALL);
+            this.emit(this.addConstant(methodName));
+            this.emit(node.arguments.length);
+            return;
         }
+
+        if (node.callee.type !== 'IdentifierExpression') {
+            throw new Error('Only named functions and methods can be called');
+        }
+
+        const funcName = (node.callee as IdentifierExpression).name;
+        const nativeName = this.getNativeName(funcName);
+        if (nativeName !== undefined) {
+            const expectedArgs = this.getExpectedArgCount(funcName);
+            if (node.arguments.length !== expectedArgs) {
+                throw new Error(`Function '${funcName}' expects ${expectedArgs} arguments, but received ${node.arguments.length}`);
+            }
+            this.validateArgumentTypes(funcName, node.arguments);
+            if (nativeName === 'malloc' || nativeName === 'free') {
+                for (const arg of node.arguments) this.generateExpression(arg);
+                this.emit(nativeName === 'malloc' ? OpCode.MALLOC : OpCode.FREE);
+            } else {
+                this.emitNativeCall(nativeName, node.arguments);
+            }
+            return;
+        }
+
+        const funcDef = this.ctx.functions.get(funcName);
+        if (!funcDef) throw new Error(`Unknown function: ${funcName}`);
+        if (node.arguments.length !== funcDef.parameters.length) {
+            throw new Error(`Function '${funcName}' expects ${funcDef.parameters.length} arguments, but received ${node.arguments.length}`);
+        }
+        for (const arg of node.arguments) this.generateExpression(arg);
+        this.emitFunctionCall(funcName, node.arguments.length);
+    }
+
+    private emitFunctionCall(functionName: string, argCount: number): void {
+        if (!this.ctx.functions.has(functionName)) throw new Error(`Unknown function: ${functionName}`);
+        this.emit(OpCode.CALL);
+        const operandIndex = this.ctx.bytecode.length;
+        this.emit(0);
+        this.emit(0);
+        this.emit(argCount);
+        this.functionCallPatches.push({ operandIndex, functionName });
+    }
+
+    private patchFunctionCalls(): void {
+        for (const patch of this.functionCallPatches) {
+            const address = this.ctx.functions.get(patch.functionName)?.address;
+            if (address === undefined) throw new Error(`Unresolved function address for '${patch.functionName}'.`);
+            if (address > 0xFFFF) throw new Error(`Function '${patch.functionName}' exceeds the VM's 16-bit address limit.`);
+            this.ctx.bytecode[patch.operandIndex] = (address >> 8) & 0xFF;
+            this.ctx.bytecode[patch.operandIndex + 1] = address & 0xFF;
+        }
+    }
+
+    private emitNativeCall(nativeName: string, args: Expression[]): void {
+        const expectedArgs = this.builtInArgCounts.get(nativeName);
+        if (expectedArgs === undefined) throw new Error(`Unknown native function '${nativeName}'`);
+        if (args.length !== expectedArgs) {
+            throw new Error(`Native function '${nativeName}' expects ${expectedArgs} arguments, but received ${args.length}`);
+        }
+        for (const arg of args) this.generateExpression(arg);
+        this.emit(OpCode.CALL_NATIVE);
+        this.emit(this.addConstant(nativeName));
+        this.emit(args.length);
     }
 
     private generateMemberExpression(node: MemberExpression): void {
@@ -849,8 +1082,9 @@ export class GyroCodeGenerator {
             this.emit(OpCode.ARRAY_GET);
         } else {
             const fieldName = (node.property as IdentifierExpression).name;
-            this.emit(OpCode.FIELD_GET);
+            this.emit(OpCode.PUSH_CONST);
             this.emit(this.addConstant(fieldName));
+            this.emit(OpCode.FIELD_GET);
         }
     }
 
@@ -859,34 +1093,94 @@ export class GyroCodeGenerator {
             const name = (node.target as IdentifierExpression).name;
             const localIndex = this.ctx.locals.get(name);
             const globalIndex = this.ctx.globals.get(name);
+            if (localIndex === undefined && globalIndex === undefined) {
+                throw new Error(`Undefined variable: ${name}`);
+            }
 
+            if (node.operator.t_type !== TokenType.EQUAL) {
+                if (localIndex !== undefined) {
+                    this.emit(OpCode.LOAD_LOCAL);
+                    this.emit(localIndex);
+                } else {
+                    this.emit(OpCode.LOAD_GLOBAL);
+                    this.emit(globalIndex!);
+                }
+            }
             this.generateExpression(node.value);
+
+            if (node.operator.t_type !== TokenType.EQUAL) {
+                const arithmetic: Partial<Record<TokenType, OpCode>> = {
+                    [TokenType.PLUS_EQUAL]: OpCode.ADD,
+                    [TokenType.MINUS_EQUAL]: OpCode.SUB,
+                    [TokenType.STAR_EQUAL]: OpCode.MUL,
+                    [TokenType.SLASH_EQUAL]: OpCode.DIV,
+                };
+                const opcode = arithmetic[node.operator.t_type];
+                if (opcode === undefined) throw new Error(`Unsupported assignment operator ${node.operator.t_type}`);
+                this.emit(opcode);
+            }
 
             if (localIndex !== undefined) {
                 this.emit(OpCode.STORE_LOCAL);
                 this.emit(localIndex);
-            } else if (globalIndex !== undefined) {
-                this.emit(OpCode.STORE_GLOBAL);
-                this.emit(globalIndex);
             } else {
-                throw new Error(`Undefined variable: ${name}`);
+                this.emit(OpCode.STORE_GLOBAL);
+                this.emit(globalIndex!);
             }
-        } else if (node.target.type === 'MemberExpression') {
+            return;
+        }
+
+        if (node.target.type === 'MemberExpression') {
             const member = node.target as MemberExpression;
+            const compoundOpcode: Partial<Record<TokenType, OpCode>> = {
+                [TokenType.PLUS_EQUAL]: OpCode.ADD,
+                [TokenType.MINUS_EQUAL]: OpCode.SUB,
+                [TokenType.STAR_EQUAL]: OpCode.MUL,
+                [TokenType.SLASH_EQUAL]: OpCode.DIV,
+            };
+            const compound = node.operator.t_type !== TokenType.EQUAL;
+            const arithmeticOpcode = compound ? compoundOpcode[node.operator.t_type] : undefined;
+            if (compound && arithmeticOpcode === undefined) {
+                throw new Error(`Unsupported compound assignment operator ${node.operator.t_type}`);
+            }
+
             this.generateExpression(member.object);
+            if (compound) this.emit(OpCode.DUP);
 
             if (member.computed) {
                 this.generateExpression(member.property);
-                this.generateExpression(node.value);
+                if (compound) {
+                    this.emit(OpCode.ARRAY_GET);
+                    this.generateExpression(node.value);
+                    this.emit(arithmeticOpcode!);
+                    this.generateExpression(member.property);
+                    this.emit(OpCode.SWAP);
+                } else {
+                    this.generateExpression(node.value);
+                }
                 this.emit(OpCode.ARRAY_SET);
             } else {
                 const fieldName = (member.property as IdentifierExpression).name;
-                this.emit(OpCode.PUSH_CONST);
-                this.emit(this.addConstant(fieldName));
-                this.generateExpression(node.value);
+                if (compound) {
+                    this.emit(OpCode.PUSH_CONST);
+                    this.emit(this.addConstant(fieldName));
+                    this.emit(OpCode.FIELD_GET);
+                    this.generateExpression(node.value);
+                    this.emit(arithmeticOpcode!);
+                    this.emit(OpCode.PUSH_CONST);
+                    this.emit(this.addConstant(fieldName));
+                    this.emit(OpCode.SWAP);
+                } else {
+                    this.emit(OpCode.PUSH_CONST);
+                    this.emit(this.addConstant(fieldName));
+                    this.generateExpression(node.value);
+                }
                 this.emit(OpCode.FIELD_SET);
             }
+            return;
         }
+
+        throw new Error('Invalid assignment target');
     }
 
     private generateArrayExpression(node: ArrayExpression): void {
@@ -918,13 +1212,19 @@ export class GyroCodeGenerator {
     }
 
 
+    private getNativeName(funcName: string): string | undefined {
+        const aliased = this.builtinAliases.get(funcName);
+        if (aliased) return aliased;
+        return this.builtInArgCounts.has(funcName) ? funcName : undefined;
+    }
+
     private isBuiltIn(funcName: string): boolean {
-        return this.builtInFunctions.has(funcName);
+        return this.getNativeName(funcName) !== undefined;
     }
 
     private getExpectedArgCount(funcName: string): number {
-        const count = this.builtInArgCounts.get(funcName);
-        return count !== undefined ? count : -1;
+        const nativeName = this.getNativeName(funcName);
+        return nativeName === undefined ? -1 : (this.builtInArgCounts.get(nativeName) ?? -1);
     }
 
     private validateArgumentTypes(funcName: string, args: Expression[]): void {
@@ -985,8 +1285,8 @@ export class GyroCodeGenerator {
         return addressIndex;
     }
 
-    private patchJump(address: number): void {
-        const jumpTarget = this.ctx.bytecode.length;
+    private patchJump(address: number, target = this.ctx.bytecode.length): void {
+        const jumpTarget = target;
 
         const highByte = (jumpTarget >> 8) & 0xFF;
         const lowByte = jumpTarget & 0xFF;
@@ -1010,7 +1310,6 @@ export function compile(source: string): CompilationResult {
         const ast = parse(tokens);
         const codegen = new GyroCodeGenerator();
 
-        // return tokens;
         return codegen.compile(ast);
     } catch (error) {
         throw new Error(`Compilation failed: ${(error as Error).message}`);

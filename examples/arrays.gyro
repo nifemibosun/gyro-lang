@@ -1,0 +1,8 @@
+import * as io from "std/io";
+import * as array from "std/array";
+
+fun main(): void {
+    let values = [1, 2, 3];
+    array.push(values, 4);
+    io.println(array.join(values, ", "));
+}

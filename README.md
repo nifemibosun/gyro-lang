@@ -1,129 +1,91 @@
-# Gyro Language
+# Gyro (TypeScript VM)
 
-A small, statically-typed programming language with a custom bytecode virtual machine, written in TypeScript. Gyro compiles to bytecode and executes on a stack-based VM, supporting functional programming, object-oriented features, and a module system.
+Gyro is a statically annotated language that compiles source into a serializable bytecode artifact and executes it on a TypeScript/Node.js virtual machine. It can be used from the CLI or embedded in a Node.js application.
 
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue)](https://www.typescriptlang.org/)
-[![Node.js](https://img.shields.io/badge/Node.js-18+-green)](https://nodejs.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+## Requirements
 
-## Features
+- Node.js 26 or newer for the complete build workflow, including the native Single Executable Application (SEA) build.
+- npm
 
-- **Static Type System** - int, float, string, bool, and null
-- **Modern Syntax** - Variables, functions, classes, control flow structures
-- **Recursion** - Full support for recursive functions
-- **Exception Handling** - try/catch/finally with throw statements
-- **Bytecode VM** - Stack-based virtual machine for efficient execution
-- **Type Inference** - Compile-time type checking and validation
-- **CLI Tools** - Compile, execute, and debug Gyro programs
+The TypeScript CLI/VM and the native SEA build have different requirements: this project's `npm run build` uses Node's native `--build-sea` command and intentionally does not use `postject`.
 
-## Quick Start
+## Build and test
 
-### Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/nifemibosun/gyro-lang.git
-cd gyro-lang
-
-# Install dependencies
+```sh
 npm install
+npm run build
+npm test
+```
 
-# Build the project
+Run the included examples:
+
+```sh
+node dist/cli.js run examples/hello.gyro
+node dist/cli.js run examples/advanced.gyro
+node dist/cli.js run examples/arrays.gyro
+node dist/cli.js run examples/loops.gyro
+```
+
+## Language example
+
+```gyro
+import * as io from "std/io";
+import * as math from "std/math";
+
+fun main(): void {
+    io.println(math.sqrt(81.0));
+}
+```
+
+Functions use `fun name(parameters): returnType { ... }`. Variables use `let name: type = value;` or `let name = value;`. Statements end in semicolons except block statements.
+
+## Embedding API
+
+```ts
+import Gyro from 'gyro';
+
+const result = await Gyro.runFile('examples/hello.gyro', {
+    output: value => console.log('[gyro]', value),
+    maxSteps: 1_000_000,
+});
+
+const artifact = Gyro.compile('fun main(): void { println("hello"); }');
+await Gyro.exec(artifact);
+```
+
+- `Gyro.compile(source)` accepts **source text**, not a filename.
+- `Gyro.compileFile(path)` reads and compiles a file.
+- `Gyro.run(source, options)` compiles and executes source text.
+- `Gyro.runFile(path, options)` reads, compiles, and executes a source file.
+- `Gyro.exec(artifact, options)` executes a full compiled artifact.
+- `Gyro.compileFileToFile(sourcePath, outputPath)` writes the complete artifact, including constants and metadata.
+- `Gyro.runBytecodeFile(path, options)` executes that artifact.
+
+The VM output callback makes it possible to capture Gyro output in tests, editors, or other applications. The `input` option can provide input without attaching a terminal. The VM also has a configurable instruction limit to stop infinite loops in embedded contexts.
+
+## Standard library
+
+Current virtual standard modules are documented in [`stdlib/README.md`](stdlib/README.md). Built-ins are provided by the VM, so these imports do not depend on physical paths under `node_modules`.
+
+## Known limitations
+
+This is still an early-stage language implementation. Custom file-based module linking, full exception/finally semantics, and some networking/pointer opcodes are not complete. The CLI's `repl` still expects complete program snippets with a `main` function rather than arbitrary expression evaluation. Unsupported native operations report explicit errors when executed.
+
+## Build a standalone executable without `postject`
+
+The build script bundles the CLI with esbuild and uses Node's native `--build-sea` command to create `gyro.exe` directly. It does not use `postject` or another external blob-injection utility.
+
+```bat
+node --version
+npm install
 npm run build
 ```
 
-### Your First Program
+Use Node.js 26 or newer for this workflow. After building, test the executable manually:
 
-Create a file called `hello.gyro`:
-
-```gyro
-fun main(): int {
-    println("Hello, Gyro!");
-    return 0;
-}
+```bat
+.\gyro.exe --version
+.\gyro.exe run examples\hello.gyro
 ```
 
-Run it:
-
-```bash
-gyro run hello.gyro
-```
-
-## Language Guide
-
-### Variables
-
-```gyro
-let x: int = 42;
-let y = 42; // y type is inferred as int
-let name: string = "Gyro";
-let pi: float = 3.14;
-let active: bool = true;
-let nothing: null = null;
-```
-
-### Functions
-
-```gyro
-fun add(a: int, b: int): int {
-    return a + b;
-}
-
-// Recursive function
-fun fibonacci(n: int): int {
-    if (n <= 1) {
-        return n;
-    }
-    return fibonacci(n - 1) + fibonacci(n - 2);
-}
-```
-
-## CLI Commands
-
-### Compile and Run
-
-```bash
-gyro run <file.gyro>
-```
-
-Compiles and executes a Gyro program in one step.
-
-### Compile to Bytecode
-
-```bash
-# specified output path
-gyro comp <file.gyro> -o <output.gbc>
-
-# unspecified output path
-gyro comp <file.gyro>
-```
-
-Compiles a Gyro program to bytecode.
-
-### Run Bytecode
-
-```bash
-gyro run <file.gbc>
-```
-
-Executes a previously compiled bytecode file.
-
-## Examples
-
-The `examples/` directory contains several programs demonstrating Gyro features
-
-Run any example:
-
-```bash
-gyro run examples/hello.gyro
-```
-
-
-## Contributing
-
-Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
----
+The executable contains the Gyro CLI and embedded Node runtime. It can execute `.gyro` files supplied to it; those source files are read from disk relative to the current working directory.

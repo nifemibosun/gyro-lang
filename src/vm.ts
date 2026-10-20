@@ -1,4 +1,5 @@
 import { OpCode, OpcodeName } from './opcodes.js';
+import type { CompilationResult } from './codegen.js';
 import readline from 'readline';
 import * as net from 'net';
 import process from 'process';
@@ -34,11 +35,33 @@ interface ExceptionHandler {
     tryEnd: number;
     catchStart: number;
     finallyStart?: number;
+    finallyEnd?: number;
+}
+
+interface PendingReturn {
+    value: GyroValue;
+    callDepth: number;
+    targets: Array<{ start: number; end: number }>;
+    nextIndex: number;
 }
 
 interface MemoryBlock {
     data: GyroValue[];
     allocated: boolean;
+}
+
+
+export interface GyroVMOptions {
+    /** Receives values printed by Gyro's print/println functions. */
+    output?: (value: unknown) => void;
+    /** Receives text written by print() without a trailing newline. */
+    write?: (text: string) => void;
+    /** Custom input provider for embedded uses. */
+    input?: (prompt?: string) => string | Promise<string>;
+    /** Command-line arguments exposed to Gyro programs. */
+    args?: string[];
+    /** Instruction limit to keep runaway programs from hanging the host forever. */
+    maxSteps?: number;
 }
 
 export class GyroVM {
@@ -55,6 +78,7 @@ export class GyroVM {
     private framePointer = 0;
     private exceptionHandlers: ExceptionHandler[] = [];
     private currentException: GyroValue = null;
+    private pendingReturns: PendingReturn[] = [];
 
     private memory: Map<number, MemoryBlock> = new Map();
     private nextMemoryAddress = 1000;
@@ -63,11 +87,31 @@ export class GyroVM {
     private nextSocketId = 1;
 
     private rl: readline.Interface | null = null;
+    private options: GyroVMOptions;
 
-    constructor(gbc: any, cliArgs: string[] = []) {
-        this.bytecode = gbc.bytecode || [];
-        this.constantPool = gbc.constantPool || [];
-        this.cliArgs = Array.isArray(cliArgs) ? cliArgs.slice() : [];
+    constructor(
+        inputProgram: CompilationResult | { bytecode: number[]; constantPool?: GyroValue[]; classes?: any[]; exceptionHandlers?: any[] } | number[],
+        cliArgsOrOptions: string[] | GyroVMOptions = [],
+        legacyConstantPool: GyroValue[] = [],
+    ) {
+        // Accept the structured compilation result used by the public API and CLI.
+        // The legacy array form remains available, but callers must supply its constant pool
+        // as the third argument if their bytecode uses PUSH_CONST/CALL_NATIVE.
+        const gbc: any = Array.isArray(inputProgram)
+            ? { bytecode: inputProgram, constantPool: legacyConstantPool }
+            : inputProgram;
+        if (!gbc || !Array.isArray(gbc.bytecode)) {
+            throw new TypeError('GyroVM expects a compilation result with a bytecode array.');
+        }
+        this.bytecode = gbc.bytecode;
+        this.constantPool = Array.isArray(gbc.constantPool) ? gbc.constantPool : [];
+        this.options = Array.isArray(cliArgsOrOptions) ? {} : cliArgsOrOptions;
+        this.cliArgs = Array.isArray(cliArgsOrOptions)
+            ? cliArgsOrOptions.slice()
+            : (cliArgsOrOptions.args ?? []).slice();
+        if (this.options.maxSteps !== undefined && (!Number.isSafeInteger(this.options.maxSteps) || this.options.maxSteps < 1)) {
+            throw new RangeError('maxSteps must be a positive safe integer.');
+        }
         
         if (gbc.classes) {
             for (const classDef of gbc.classes) {
@@ -145,6 +189,47 @@ export class GyroVM {
         return best;
     }
 
+    private findReturnFinalizers(ip: number): Array<{ start: number; end: number }> {
+        const matches = this.exceptionHandlers
+            .filter((handler): handler is ExceptionHandler & { finallyStart: number; finallyEnd: number } =>
+                Number.isInteger(handler.finallyStart)
+                && Number.isInteger(handler.finallyEnd)
+                && ip >= handler.tryStart
+                && ip <= handler.tryEnd)
+            .sort((a, b) => b.tryStart - a.tryStart);
+
+        const targets: Array<{ start: number; end: number }> = [];
+        const seen = new Set<string>();
+        for (const handler of matches) {
+            const start = handler.finallyStart;
+            const end = handler.finallyEnd;
+            const key = `${start}:${end}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            targets.push({ start, end });
+        }
+        return targets;
+    }
+
+    private cancelPendingReturnsAtDepth(depth: number): void {
+        this.pendingReturns = this.pendingReturns.filter(pending => pending.callDepth !== depth);
+    }
+
+    private returnFromFunction(value: GyroValue): void {
+        const frame = this.callStack.pop();
+        if (!frame) {
+            this.running = false;
+            this.stack.push(value);
+            return;
+        }
+
+        this.ip = frame.returnIp;
+        while (this.stack.length > this.framePointer) this.pop();
+        this.stack.splice(this.framePointer, this.stack.length - this.framePointer);
+        this.framePointer = frame.framePointer;
+        this.stack.push(value);
+    }
+
     private pop<T extends GyroValue>(): T {
         if (this.stack.length < 1) {
             throw new Error(`Stack underflow in pop(), need 1, got ${this.stack.length}`);
@@ -152,8 +237,127 @@ export class GyroVM {
         return this.stack.pop() as T;
     }
 
+    private emitOutput(value: GyroValue, newline: boolean): void {
+        const rendered = this.valueToString(value);
+        if (newline) {
+            if (this.options.output) this.options.output(rendered);
+            else console.log(rendered);
+        } else if (this.options.write) {
+            this.options.write(rendered);
+        } else if (this.options.output) {
+            this.options.output(rendered);
+        } else {
+            process.stdout.write(rendered);
+        }
+    }
+
+    private valueToString(value: GyroValue): string {
+        if (value === null || value === undefined) return value === undefined ? 'undefined' : 'null';
+        if (Array.isArray(value)) return `[${value.map(item => this.valueToString(item)).join(', ')}]`;
+        if (typeof value === 'object' && 'className' in value && 'fields' in value) {
+            const object = value as GyroObject;
+            const fields = [...object.fields.entries()].map(([key, item]) => `${key}: ${this.valueToString(item)}`);
+            return `${object.className} { ${fields.join(', ')} }`;
+        }
+        if (typeof value === 'object' && 'address' in value && 'size' in value) {
+            const pointer = value as GyroPointer;
+            return `Pointer(${pointer.address}, ${pointer.size})`;
+        }
+        return String(value);
+    }
+
+    private async readInput(prompt = 'Input: '): Promise<string> {
+        if (this.options.input) return String(await this.options.input(prompt));
+        if (!this.rl) this.rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        process.stdout.write(prompt);
+        return await new Promise<string>(resolve => this.rl!.question('', resolve));
+    }
+
+    private async callNative(name: string, args: GyroValue[]): Promise<GyroValue> {
+        const asNumber = (value: GyroValue, functionName: string): number => {
+            if (typeof value !== 'number' || !Number.isFinite(value)) {
+                throw new TypeError(`${functionName} expects numeric arguments.`);
+            }
+            return value;
+        };
+        const asString = (value: GyroValue, functionName: string): string => {
+            if (typeof value !== 'string') throw new TypeError(`${functionName} expects string arguments.`);
+            return value;
+        };
+        const one = args[0];
+
+        switch (name) {
+            case 'print': this.emitOutput(one, false); return null;
+            case 'println': this.emitOutput(one, true); return null;
+            case 'input': return this.readInput('');
+            case 'len':
+                if (typeof one === 'string') return [...one].length;
+                if (Array.isArray(one)) return one.length;
+                throw new TypeError('len expects a string or array.');
+            case 'str': return this.valueToString(one);
+            case 'int': {
+                const value = typeof one === 'number' ? Math.trunc(one) : Number.parseInt(String(one), 10);
+                if (!Number.isFinite(value)) throw new TypeError(`Cannot convert '${String(one)}' to int.`);
+                return value;
+            }
+            case 'float': {
+                const value = typeof one === 'number' ? one : Number(String(one));
+                if (!Number.isFinite(value)) throw new TypeError(`Cannot convert '${String(one)}' to float.`);
+                return value;
+            }
+            case 'typeOf':
+                if (one === null) return 'null';
+                if (Array.isArray(one)) return 'array';
+                if (typeof one === 'object') return 'object';
+                return typeof one;
+            case 'assert': if (!one) throw new Error('Assertion failed.'); return null;
+            case 'abs': return Math.abs(asNumber(one, name));
+            case 'floor': return Math.floor(asNumber(one, name));
+            case 'ceil': return Math.ceil(asNumber(one, name));
+            case 'round': return Math.round(asNumber(one, name));
+            case 'sqrt': return Math.sqrt(asNumber(one, name));
+            case 'pow': return Math.pow(asNumber(args[0], name), asNumber(args[1], name));
+            case 'min': return Math.min(asNumber(args[0], name), asNumber(args[1], name));
+            case 'max': return Math.max(asNumber(args[0], name), asNumber(args[1], name));
+            case 'sin': return Math.sin(asNumber(one, name));
+            case 'cos': return Math.cos(asNumber(one, name));
+            case 'tan': return Math.tan(asNumber(one, name));
+            case 'log': return Math.log(asNumber(one, name));
+            case 'exp': return Math.exp(asNumber(one, name));
+            case 'random': return Math.random();
+            case 'stringLength': return [...asString(one, name)].length;
+            case 'stringCharAt': return asString(args[0], name).charAt(asNumber(args[1], name));
+            case 'stringSubstring': return asString(args[0], name).substring(asNumber(args[1], name), asNumber(args[2], name));
+            case 'stringIndexOf': return asString(args[0], name).indexOf(asString(args[1], name));
+            case 'stringContains': return asString(args[0], name).includes(asString(args[1], name));
+            case 'stringStartsWith': return asString(args[0], name).startsWith(asString(args[1], name));
+            case 'stringEndsWith': return asString(args[0], name).endsWith(asString(args[1], name));
+            case 'stringReplace': return asString(args[0], name).replace(asString(args[1], name), asString(args[2], name));
+            case 'stringSplit': return asString(args[0], name).split(asString(args[1], name));
+            case 'stringToInt': {
+                const value = Number.parseInt(asString(one, name), 10);
+                if (!Number.isFinite(value)) throw new TypeError(`Cannot parse '${String(one)}' as an integer.`);
+                return value;
+            }
+            case 'stringToFloat': {
+                const value = Number(asString(one, name));
+                if (!Number.isFinite(value)) throw new TypeError(`Cannot parse '${String(one)}' as a float.`);
+                return value;
+            }
+            case 'arrayLength': if (Array.isArray(one)) return one.length; throw new TypeError('array.length expects an array.');
+            case 'arrayPush': if (Array.isArray(args[0])) return args[0].push(args[1]); throw new TypeError('array.push expects an array.');
+            case 'arrayPop': if (Array.isArray(one)) return one.pop() ?? null; throw new TypeError('array.pop expects an array.');
+            case 'arrayJoin': if (Array.isArray(args[0])) return args[0].map(item => this.valueToString(item)).join(asString(args[1], name)); throw new TypeError('array.join expects an array and a separator.');
+            case 'arrayIncludes': if (Array.isArray(args[0])) return args[0].includes(args[1]); throw new TypeError('array.includes expects an array.');
+            default: throw new Error(`Unknown native function '${name}'.`);
+        }
+    }
+
     async run(): Promise<GyroValue | undefined> {
+        let steps = 0;
+        const maxSteps = this.options.maxSteps ?? 10_000_000;
         while (this.running && this.ip < this.bytecode.length) {
+            if (++steps > maxSteps) throw new Error(`Execution stopped after ${maxSteps} instructions (maxSteps limit).`);
             try {
                 const op = this.readByte();
 
@@ -210,7 +414,7 @@ export class GyroVM {
                             case OpCode.MUL: result = a * b; break;
                             case OpCode.DIV:
                                 if (b === 0) throw new Error("Division by zero");
-                                result = Math.trunc(a / b);
+                                result = a / b;
                                 break;
                         }
                         this.stack.push(result);
@@ -221,6 +425,7 @@ export class GyroVM {
                         this.ensureStack(2);
                         const modB = this.pop<number>();
                         const modA = this.pop<number>() as number;
+                        if (modB === 0) throw new Error('Modulo by zero');
                         this.stack.push(modA % modB);
                         break;
 
@@ -281,17 +486,23 @@ export class GyroVM {
 
                     case OpCode.RET: {
                         const retVal = this.pop();
-                        const frame = this.callStack.pop();
-                        if (!frame) {
-                            this.running = false;
-                            this.stack.push(retVal);
-                            break;
+                        const depth = this.callStack.length;
+                        // A return inside a try/catch protected by finally must defer the
+                        // actual frame return until each active finalizer has run. A return
+                        // inside a finalizer overrides any earlier pending return.
+                        this.cancelPendingReturnsAtDepth(depth);
+                        const finalizers = this.findReturnFinalizers(this.ip - 1);
+                        if (finalizers.length > 0) {
+                            this.pendingReturns.push({
+                                value: retVal,
+                                callDepth: depth,
+                                targets: finalizers,
+                                nextIndex: 0,
+                            });
+                            this.ip = finalizers[0]!.start;
+                        } else {
+                            this.returnFromFunction(retVal);
                         }
-                        this.ip = frame.returnIp;
-                        while (this.stack.length > this.framePointer) this.pop();
-                        this.stack.splice(this.framePointer, this.stack.length - this.framePointer);
-                        this.framePointer = frame.framePointer;
-                        this.stack.push(retVal);
                         break;
                     }
 
@@ -328,18 +539,25 @@ export class GyroVM {
                         break;
                     }
 
-                    case OpCode.PRINT_LN:
-                        console.log(this.pop());
+                    case OpCode.PRINT_LN: {
+                        this.emitOutput(this.pop(), true);
                         this.stack.push(null);
                         break;
+                    }
 
                     case OpCode.INPUT: {
-                        if (!this.rl) {
-                            this.rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-                        }
-                        process.stdout.write("Input: ");
-                        const input = await new Promise<string>(res => this.rl!.question('', res));
-                        this.stack.push(input);
+                        this.stack.push(await this.readInput());
+                        break;
+                    }
+
+                    case OpCode.CALL_NATIVE: {
+                        const name = this.constantPool[this.readByte()];
+                        const argCount = this.readByte();
+                        if (typeof name !== 'string') throw new Error('CALL_NATIVE constant must be a function name.');
+                        this.ensureStack(argCount);
+                        const args = this.stack.splice(this.stack.length - argCount, argCount);
+                        const result = await this.callNative(name, args);
+                        this.stack.push(result);
                         break;
                     }
 
@@ -576,6 +794,18 @@ export class GyroVM {
                         break;
                     }
 
+                    case OpCode.MEMSET: {
+                        this.ensureStack(3);
+                        const size = this.pop<number>();
+                        const value = this.pop();
+                        const ptr = this.pop() as GyroPointer;
+                        const block = this.memory.get(ptr?.address);
+                        if (!block || !block.allocated) throw new Error('MEMSET: Invalid or freed memory');
+                        if (!Number.isInteger(size) || size < 0 || size > block.data.length) throw new Error('MEMSET: Out of bounds');
+                        for (let i = 0; i < size; i++) block.data[i] = value;
+                        break;
+                    }
+
                     case OpCode.PTR_GET: {
                         this.ensureStack(2);
                         const offset = this.pop<number>();
@@ -683,9 +913,10 @@ export class GyroVM {
                     case OpCode.THROW: {
                         this.ensureStack(1);
                         const exception = this.pop();
+                        this.cancelPendingReturnsAtDepth(this.callStack.length);
                         this.currentException = exception;
                         
-                        const handler = this.findExceptionHandler(this.ip);
+                        const handler = this.findExceptionHandler(Math.max(0, this.ip - 1));
                         if (handler) {
                             this.ip = handler.catchStart;
                             this.stack.push(exception);
@@ -700,6 +931,47 @@ export class GyroVM {
                         break;
                     }
 
+                    case OpCode.FINALLY:
+                        // Legacy marker retained for older bytecode artifacts.
+                        break;
+
+                    case OpCode.FINALLY_END: {
+                        const depth = this.callStack.length;
+                        let pendingIndex = -1;
+                        for (let i = this.pendingReturns.length - 1; i >= 0; i--) {
+                            if (this.pendingReturns[i]!.callDepth === depth) {
+                                pendingIndex = i;
+                                break;
+                            }
+                        }
+                        if (pendingIndex >= 0) {
+                            const pending = this.pendingReturns[pendingIndex]!;
+                            const expected = pending.targets[pending.nextIndex];
+                            if (expected && expected.end === this.ip - 1) {
+                                pending.nextIndex++;
+                                const next = pending.targets[pending.nextIndex];
+                                if (next) {
+                                    this.ip = next.start;
+                                } else {
+                                    this.pendingReturns.splice(pendingIndex, 1);
+                                    this.returnFromFunction(pending.value);
+                                }
+                            }
+                        }
+                        break;
+                    }
+
+                    case OpCode.RETHROW: {
+                        const exception = this.currentException;
+                        this.currentException = null;
+                        if (exception instanceof Error) throw exception;
+                        throw new Error(`Unhandled Gyro exception: ${this.valueToString(exception)}`);
+                    }
+
+                    case OpCode.SOCKET_ACCEPT:
+                    case OpCode.SOCKET_RECV:
+                        throw new Error(`${OpcodeName[op]} is declared but is not implemented yet.`);
+
                     case OpCode.EXIT:
                         this.running = false;
                         break;
@@ -708,7 +980,8 @@ export class GyroVM {
                         throw new Error(`Unknown opcode: 0x${op.toString(16)} at ip=${this.ip - 1}`);
                 }
             } catch (error: any) {
-                const handler = this.findExceptionHandler(this.ip);
+                this.cancelPendingReturnsAtDepth(this.callStack.length);
+                const handler = this.findExceptionHandler(Math.max(0, this.ip - 1));
                 if (handler) {
                     this.currentException = error;
                     this.ip = handler.catchStart;
