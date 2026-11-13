@@ -1,7 +1,7 @@
 {
   "name": "gyro",
-  "version": "0.3.0",
-  "description": "A statically annotated language written in typescript",
+  "version": "0.1.0",
+  "description": "A statically compiled language written in typescript",
   "homepage": "https://github.com/nifemibosun/gyro-lang#readme",
   "bugs": {
     "url": "https://github.com/nifemibosun/gyro-lang/issues"
@@ -15,20 +15,10 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "test": "npm run build:ts && node ./dist/test.js",
-    "build:ts": "tsc",
-    "build:prep": "npm run build:ts && node scripts/build-sea.mjs",
-    "build": "npm run build:prep"
-  },
-  "bin": {
-    "gyro": "./dist/cli.js"
-  },
-  "engines": {
-    "node": ">=26"
+    "build": "tsc"
   },
   "devDependencies": {
-    "@types/node": "^26.6.5",
-    "esbuild": "^0.28.2",
+    "@types/node": "^26.6.6",
     "typescript": "^7.0.2"
   }
 }
